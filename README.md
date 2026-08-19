@@ -1,45 +1,45 @@
-# Coder + Claude Code auf Proxmox (LXC)
+# Coder + Claude Code on Proxmox (LXC)
 
-Ein Coder-Template, das pro Task automatisch einen Proxmox-LXC-Workspace mit Claude Code erstellt — authentifiziert über einen Claude Pro/Max-Abo OAuth-Token (kein API-Key nötig), inklusive Demo-Webseiten-Button, Größen-Presets, Automatik-Modus und Multi-Node-Unterstützung.
+A Coder template that automatically spins up a Proxmox LXC workspace with Claude Code for every task — authenticated via a Claude Pro/Max subscription OAuth token (no API key needed), including a demo-website button, size presets, an automatic ("no confirmations") mode, and multi-node support.
 
-## Was das Template macht
+## What this template does
 
-- Erstellt bei jedem neuen Task automatisch einen frischen Proxmox-LXC-Container
-- Installiert und startet Claude Code darin, authentifiziert mit deinem **Pro/Max-Abo** (nicht pay-per-token)
-- Bietet einen **Demo-Webseiten-Button**, um im Workspace erstellte Webseiten direkt anzusehen
-- Größen-Presets (Klein/Mittel/Groß) und ein **Automatik-Modus** (Claude arbeitet ohne Rückfragen)
-- **Persistent**: Stop/Start löscht den Container nicht mehr — Daten bleiben erhalten
-- Optional: Wahl zwischen mehreren Proxmox-Nodes bei der Erstellung (Cluster-Setup)
+- Automatically creates a fresh Proxmox LXC container for every new task
+- Installs and starts Claude Code inside it, authenticated with your **Pro/Max subscription** (not pay-per-token)
+- Provides a **demo website button** to view sites built inside the workspace directly
+- Size presets (Small/Medium/Large) and an **automatic mode** (Claude works without asking for confirmation on every action)
+- **Persistent**: Stop/Start no longer destroys the container — data is preserved
+- Optional: pick between multiple Proxmox nodes at creation time (cluster setups)
 
-## Voraussetzungen
+## Prerequisites
 
-- Ein laufender **Coder-Server** (Docker, siehe [offizielle Coder-Doku](https://coder.com/docs))
-- **Proxmox VE** (Single-Node oder Cluster)
-- Ein **Claude Pro oder Max Abo** (für den OAuth-Token)
-- Grundkenntnisse in Terraform/Proxmox
+- A running **Coder server** (Docker, see the [official Coder docs](https://coder.com/docs))
+- **Proxmox VE** (single node or cluster)
+- A **Claude Pro or Max subscription** (for the OAuth token)
+- Basic familiarity with Terraform/Proxmox
 
 ---
 
-## 1. Proxmox vorbereiten
+## 1. Prepare Proxmox
 
-### 1.1 API-Token erstellen
+### 1.1 Create an API token
 
-In der Proxmox-Weboberfläche:
+In the Proxmox web UI:
 
 1. **Datacenter → Permissions → API Tokens → Add**
-2. User: `root@pam`, Token-ID: `terraform`
-3. **"Privilege Separation" deaktivieren** (wichtig — sonst funktionieren API-Calls nicht ohne zusätzliche ACL-Einträge)
-4. Secret sicher notieren (wird nur einmal angezeigt)
+2. User: `root@pam`, Token ID: `terraform`
+3. **Disable "Privilege Separation"** (important — otherwise API calls fail without extra ACL entries)
+4. Note the secret securely (it's shown only once)
 
-Alternativ per CLI auf dem Proxmox-Host:
+Alternatively via CLI on the Proxmox host:
 
 ```bash
 pveum user token add root@pam terraform --privsep 0
 ```
 
-### 1.2 Template-Container vorbereiten (VMID 9000)
+### 1.2 Prepare the template container (VMID 9000)
 
-Dies ist die Vorlage, aus der jeder Workspace-Container geklont wird. Sie braucht einen SSH-Server, damit Coder sich verbinden kann.
+This is the base image every workspace container gets cloned from. It needs an SSH server so Coder can connect.
 
 ```bash
 pveam update
@@ -62,7 +62,7 @@ pct stop 9000
 pct set 9000 --template 1
 ```
 
-> **Bekannter Bug:** Das native `clone`-Attribut des `telmate/proxmox`-Providers ist fehlerhaft ("vm not found", GitHub Issue offen). Deshalb wird stattdessen ein Backup-Archiv erstellt und über `ostemplate` referenziert:
+> **Known bug:** The native `clone` attribute of the `telmate/proxmox` provider is broken ("vm not found", open GitHub issue). A backup archive is created instead and referenced via `ostemplate`:
 
 ```bash
 vzdump 9000 --mode stop --compress zstd --dumpdir /var/lib/vz/dump
@@ -71,23 +71,23 @@ cp /var/lib/vz/dump/vzdump-lxc-9000-*.tar.zst /var/lib/vz/template/cache/ubuntu-
 
 ---
 
-## 2. SSH-Key für den Coder-Container
+## 2. SSH key for the Coder container
 
-Der Coder-Server-Container braucht einen SSH-Key, um sich mit neu erstellten LXCs zu verbinden.
+The Coder server container needs an SSH key to connect to newly created LXCs.
 
-Auf dem Docker-Host (wo Coder läuft):
+On the Docker host (where Coder runs):
 
 ```bash
 ssh-keygen -t rsa -b 4096 -f ~/coder-ssh-key -N ""
 ```
 
-Herausfinden, als welcher User/UID der Coder-Container läuft:
+Find out which user/UID the Coder container runs as:
 
 ```bash
 docker exec -it coder-coder-1 id
 ```
 
-Rechte entsprechend anpassen (Beispiel für UID 1000):
+Adjust ownership accordingly (example for UID 1000):
 
 ```bash
 chown 1000:1000 ~/coder-ssh-key ~/coder-ssh-key.pub
@@ -95,7 +95,7 @@ chmod 600 ~/coder-ssh-key
 chmod 644 ~/coder-ssh-key.pub
 ```
 
-In deiner `docker-compose.yaml` beim `coder`-Service ergänzen:
+Add to your `docker-compose.yaml` under the `coder` service:
 
 ```yaml
 services:
@@ -105,31 +105,31 @@ services:
       - ~/coder-ssh-key.pub:/home/coder/.ssh/id_rsa.pub
 ```
 
-Danach: `docker compose up -d`
+Then: `docker compose up -d`
 
 ---
 
-## 3. Netzwerk / Firewall
+## 3. Network / firewall
 
-Falls deine Proxmox-LXCs in einem eigenen, isolierten VLAN laufen (empfohlen), muss der Coder-Server sie erreichen können — und umgekehrt.
+If your Proxmox LXCs run in their own isolated VLAN (recommended), the Coder server needs to reach them — and vice versa.
 
-**Benötigte Firewall-Regeln** (Beispiel UniFi, gilt sinngemäß für jede Firewall):
+**Required firewall rules** (UniFi example, applies analogously to any firewall):
 
-| Reihenfolge | Regel | Quelle | Ziel | Port | Aktion |
+| Order | Rule | Source | Destination | Port | Action |
 |---|---|---|---|---|---|
-| 1 | Docker→Workspace-VLAN | Docker-Host-IP | Workspace-VLAN | 22 | Zulassen |
-| 2 | Workspace-VLAN→Docker | Workspace-VLAN | Docker-Host-IP | 22, 7080 | Zulassen |
-| 3 | Workspace-VLAN Isolation | Workspace-VLAN | Beliebig | Beliebig | Blockieren |
+| 1 | Docker→Workspace VLAN | Docker host IP | Workspace VLAN | 22 | Allow |
+| 2 | Workspace VLAN→Docker | Workspace VLAN | Docker host IP | 22, 7080 | Allow |
+| 3 | Workspace VLAN isolation | Workspace VLAN | Any | Any | Block |
 
-**Wichtig:** Die Reihenfolge muss exakt so sein — Allow-Regeln müssen vor der allgemeinen Block-Regel stehen, sonst greifen sie nie.
+**Important:** The order matters — allow rules must come before the general block rule, otherwise they never take effect.
 
-> **Bekanntes Problem:** Neue LXC-Container können nach dem ersten Boot mehrere Minuten brauchen, bis sie zuverlässig erreichbar sind (vermutlich Switch-seitige Verzögerung, wenn eine neue MAC-Adresse zum ersten Mal auftaucht — sogenanntes Spanning-Tree-Forwarding-Delay). Der SSH-Provisioner-Timeout im Template ist deshalb auf 10 Minuten gesetzt. Falls möglich, PortFast/Edge-Port am betroffenen Switch-Port aktivieren, um das zu beheben.
+> **Known issue:** New LXC containers can take several minutes after first boot before they're reliably reachable (likely switch-side delay when a new MAC address first appears — spanning-tree forwarding delay). The SSH provisioner timeout in the template is therefore set to 10 minutes. If possible, enable PortFast/edge port on the relevant switch port to fix this properly.
 
 ---
 
-## 4. Claude Code OAuth-Token generieren
+## 4. Generate a Claude Code OAuth token
 
-Auf deinem lokalen Rechner (nicht auf dem Server):
+On your local machine (not on the server):
 
 ```bash
 curl -fsSL https://claude.ai/install.sh | bash
@@ -138,127 +138,127 @@ claude
 claude setup-token
 ```
 
-Der Token beginnt mit `sk-ant-oat...` — sicher notieren, du brauchst ihn für jeden Template-Push.
+The token starts with `sk-ant-oat...` — note it securely, you'll need it for every template push.
 
 ---
 
-## 5. Template konfigurieren und ausrollen
+## 5. Configure and deploy the template
 
-### 5.1 Repo klonen
+### 5.1 Clone the repo
 
 ```bash
-git clone https://github.com/DEIN-USERNAME/DEIN-REPO.git
-cd DEIN-REPO
+git clone https://github.com/YOUR-USERNAME/YOUR-REPO.git
+cd YOUR-REPO
 ```
 
-### 5.2 Werte anpassen
+### 5.2 Adjust values
 
-In `main.tf` folgende Defaults auf deine Umgebung anpassen:
+In `main.tf`, adjust these defaults to your environment:
 
-| Variable | Wo | Was |
+| Variable | Where | What |
 |---|---|---|
-| `pm_api_url` | `variable "pm_api_url"` | Deine Proxmox-API-URL, z. B. `https://192.168.1.10:8006/api2/json` |
-| `target_node` | `variable "target_node"` | Dein Proxmox-Node-Name |
-| `lxc_subnet`, `lxc_gateway`, `lxc_vlan_tag` | jeweilige Variablen | Dein Netzwerk für die Workspaces |
+| `pm_api_url` | `variable "pm_api_url"` | Your Proxmox API URL, e.g. `https://192.168.1.10:8006/api2/json` |
+| `target_node` | `variable "target_node"` | Your Proxmox node name |
+| `lxc_subnet`, `lxc_gateway`, `lxc_vlan_tag` | respective variables | Your network for the workspaces |
 
-Falls du **zwei Proxmox-Nodes** (Cluster) hast und die Node-Auswahl nutzen willst: in `scripts/get_cluster_load.sh` die Variablen `PREFERRED_NODE` und `FAILOVER_NODE` sowie in `main.tf` alle `"pve"`/`"pve4"`-Vorkommen auf deine echten Node-Namen anpassen.
+If you have **two Proxmox nodes** (cluster) and want to use node selection: adjust `PREFERRED_NODE` and `FAILOVER_NODE` in `scripts/get_cluster_load.sh`, and update every `"pve"`/`"pve4"` occurrence in `main.tf` to your real node names.
 
-### 5.3 Coder CLI installieren und einloggen
+### 5.3 Install the Coder CLI and log in
 
 ```bash
 curl -fsSL https://coder.com/install.sh | sh
-coder login https://deine-coder-url.de
+coder login https://your-coder-url.com
 ```
 
-### 5.4 Template pushen
+### 5.4 Push the template
 
 ```bash
 coder templates push lxc-claude-task -d . \
   --variable pm_api_token_id='root@pam!terraform' \
-  --variable pm_api_token_secret='DEIN-PROXMOX-TOKEN-SECRET' \
-  --variable claude_code_oauth_token='DEIN-CLAUDE-OAUTH-TOKEN' \
+  --variable pm_api_token_secret='YOUR-PROXMOX-TOKEN-SECRET' \
+  --variable claude_code_oauth_token='YOUR-CLAUDE-OAUTH-TOKEN' \
   --variable lxc_subnet='10.0.75' \
   --variable lxc_gateway='10.0.75.1' \
   --variable lxc_vlan_tag='75'
 ```
 
-> **Wichtig:** Alle Variablen müssen bei **jedem** Push explizit mitgegeben werden — Coder speichert sonst stillschweigend den zuletzt genutzten Wert weiter, auch wenn sich der Default in `main.tf` geändert hat.
+> **Important:** All variables must be passed explicitly on **every** push — otherwise Coder silently keeps reusing the last value, even if the default in `main.tf` has changed.
 
 ---
 
-## 6. Nutzung
+## 6. Usage
 
-### Neuen Workspace mit Webseite erstellen
+### Creating a new workspace with a website
 
-1. Coder-Dashboard → **Tasks** → Template auswählen
-2. Preset wählen (Größe + mit/ohne Rückfragen + ggf. Node)
-3. Prompt eingeben, z. B.:
-   > Erstelle eine moderne Landingpage für [Branche/Thema]. Entwirf Struktur, Inhalte und Design selbst. Deploye mit Docker (nginx:alpine), festes Port-Mapping -p 8080:80.
-4. Start klicken
+1. Coder dashboard → **Tasks** → select the template
+2. Pick a preset (size + with/without confirmations + optionally node)
+3. Enter a prompt, e.g.:
+   > Build a modern landing page for [industry/topic]. Design the structure, content, and visuals yourself. Deploy with Docker (nginx:alpine), fixed port mapping -p 8080:80.
+4. Click Start
 
-### Wichtig für den Demo-Button
+### Important for the demo button
 
-Der Demo-Button erwartet die Webseite auf **Port 8080** (`localhost:8080` im Workspace). Immer explizit "festes Port-Mapping 8080:80" ins Prompt schreiben, sonst vergibt Docker einen zufälligen Port und der Button funktioniert nicht.
+The demo button expects the website on **port 8080** (`localhost:8080` inside the workspace). Always explicitly write "fixed port mapping 8080:80" in your prompt, otherwise Docker assigns a random port and the button won't work.
 
-### Workspace stoppen/löschen
+### Stopping/deleting a workspace
 
-- **Stoppen/Neustarten**: über die Coder-UI — der Container bleibt erhalten, keine Datenverluste
-- **Endgültig löschen**: über die Coder-UI löschen (nicht nur stoppen), sonst bleibt der Proxmox-Container bestehen
-- Beim Löschen **nicht** "Orphan"/"Skip resource cleanup" ankreuzen, falls diese Option erscheint
+- **Stop/Restart**: via the Coder UI — the container is preserved, no data loss
+- **Delete permanently**: delete via the Coder UI (not just stop), otherwise the Proxmox container remains
+- **Do not** check "Orphan"/"Skip resource cleanup" if that option appears when deleting
 
 ---
 
-## Template-Struktur
+## Template structure
 
 ```
 .
-├── main.tf                       Haupt-Template
-├── watchdog.sh.tftpl              Hält Claude Code/agentapi zuverlässig am Laufen
+├── main.tf                       Main template
+├── watchdog.sh.tftpl              Keeps Claude Code/agentapi running reliably
 └── scripts/
-    ├── find_free_ip.sh            Automatische IP-Zuweisung im VLAN
-    └── get_cluster_load.sh        Live-Auslastungsanzeige für Multi-Node-Auswahl
+    ├── find_free_ip.sh            Automatic IP assignment within the VLAN
+    └── get_cluster_load.sh        Live load display for multi-node selection
 ```
 
-### Wichtige Design-Entscheidungen
+### Key design decisions
 
-**Coder-Agent als systemd-Service statt direktem SSH-Aufruf**
-Der Agent läuft als eigener systemd-Service mit `Restart=always`, statt direkt über den SSH-Provisioner gestartet zu werden — das verhindert, dass die Terraform-Verbindung dauerhaft blockiert (der Agent läuft ja permanent im Vordergrund).
+**Coder agent as a systemd service instead of a direct SSH call**
+The agent runs as its own systemd service with `Restart=always` instead of being launched directly by the SSH provisioner — this prevents the Terraform connection from blocking indefinitely (the agent runs permanently in the foreground).
 
-**Watchdog für Claude Code**
-Der automatische Boot-Start von `agentapi` (dem Wrapper, der Claude Code in die Coder-Web-UI einbettet) hat keinen eingebauten Neustart-Mechanismus. Ein Cronjob prüft `localhost:3284/status` jede Minute und startet bei Bedarf neu.
+**Watchdog for Claude Code**
+The automatic boot-time start of `agentapi` (the wrapper that embeds Claude Code into the Coder web UI) has no built-in restart mechanism. A cron job checks `localhost:3284/status` every minute and restarts it if needed.
 
-**Persistenz statt Neu-Erstellung**
-Ursprünglich löschte `count = data.coder_workspace.me.start_count` den kompletten Container bei jedem Stop und erstellte bei Start einen neuen. Das ist jetzt behoben: `count` wurde entfernt, `start` steuert nur noch den Power-Status, `lifecycle.ignore_changes` verhindert ungewollte Neuerstellung durch IP-/Template-Änderungen.
+**Persistence instead of recreation**
+Originally, `count = data.coder_workspace.me.start_count` destroyed the entire container on every stop and created a brand-new one on start. This is now fixed: `count` was removed, `start` only controls power state, and `lifecycle.ignore_changes` prevents unwanted recreation due to IP/template changes.
 
 **`coder_parameter` vs. `coder_workspace_preset`**
-Der Tasks-Flow (AI-Prompt-Textfeld) zeigt keine rohen `coder_parameter`-Werte an (offizielles Coder-Verhalten). Größen- und Modus-Auswahl läuft deshalb über `coder_workspace_preset`-Blöcke (Achtung: `data`-Block, nicht `resource`).
+The Tasks flow (AI prompt text field) doesn't display raw `coder_parameter` values (official Coder behavior). Size and mode selection therefore goes through `coder_workspace_preset` blocks (note: `data` block, not `resource`).
 
 ---
 
 ## Troubleshooting
 
-| Symptom | Wahrscheinliche Ursache | Fix |
+| Symptom | Likely cause | Fix |
 |---|---|---|
-| SSH-Timeout beim Erstellen | Netzwerk-/Switch-Verzögerung beim ersten Boot | Warten, ggf. Timeout im Template erhöhen |
-| `agentapi` 502 in Web-UI | Watchdog hat noch nicht gegriffen | 1–2 Min. warten, Cron läuft jede Minute |
-| Claude fragt nach Login | OAuth-Token fehlt/falsch im Watchdog | Token in `watchdog.sh.tftpl` prüfen |
-| "Invalid host header" | `AGENTAPI_ALLOWED_HOSTS` fehlt | Im Watchdog-Skript gesetzt, prüfen |
-| Demo-Button ausgegraut | `subdomain = true` ohne Wildcard-DNS konfiguriert | Auf `subdomain = false` setzen |
-| "vm not found" beim Erstellen | Bekannter Bug im `clone`-Attribut des Providers | `ostemplate` statt `clone` verwenden |
-| Claude Code installiert nicht / `ECONNREFUSED downloads.claude.ai` | Kurzzeitiger Netzwerk-Hänger, oft bei parallel erstellten Workspaces | Manuell nachinstallieren: `curl -fsSL https://claude.ai/install.sh -o /tmp/i.sh && bash /tmp/i.sh`, danach Watchdog antriggern |
-| Dezimal-Komma-Fehler in `awk` (Cluster-Load-Skript) | Deutsche Locale auf dem Coder-Host | `LC_NUMERIC=C` vor jedem `awk`-Aufruf setzen (bereits im Skript enthalten) |
+| SSH timeout during creation | Network/switch delay on first boot | Wait, optionally increase the timeout in the template |
+| `agentapi` 502 in web UI | Watchdog hasn't kicked in yet | Wait 1–2 min, cron runs every minute |
+| Claude asks to log in | OAuth token missing/wrong in the watchdog | Check the token in `watchdog.sh.tftpl` |
+| "Invalid host header" | `AGENTAPI_ALLOWED_HOSTS` missing | Set in the watchdog script, verify it |
+| Demo button greyed out | `subdomain = true` without wildcard DNS configured | Set to `subdomain = false` |
+| "vm not found" during creation | Known bug in the provider's `clone` attribute | Use `ostemplate` instead of `clone` |
+| Claude Code fails to install / `ECONNREFUSED downloads.claude.ai` | Brief network hiccup, often when creating workspaces in parallel | Reinstall manually: `curl -fsSL https://claude.ai/install.sh -o /tmp/i.sh && bash /tmp/i.sh`, then trigger the watchdog |
+| Decimal-comma error in `awk` (cluster load script) | German locale on the Coder host | Prefix every `awk` call with `LC_NUMERIC=C` (already included in the script) |
 
 ---
 
-## Bekannte offene Punkte
+## Known open issues
 
-- **`dangerously_skip_permissions`** funktioniert nicht, wenn Claude Code als `root` läuft (Standardfall in diesem Setup) — umgangen über `IS_SANDBOX=1` als Umgebungsvariable
-- **Watchdog erkennt fehlende Claude-Installation nicht**: Falls die Erstinstallation komplett fehlschlägt (z. B. Netzwerkfehler), erkennt der Watchdog aktuell nur, ob `agentapi` läuft — nicht, ob `claude` selbst installiert ist. Bei diesem Fehlerbild ist manuelles Nachinstallieren nötig (siehe Troubleshooting)
-- **Kein Live-Failover für laufende Workspaces**: Die Node-Auswahl gilt nur bei der Erstellung. Ein bereits laufender Workspace wird nicht automatisch auf einen anderen Node verschoben, selbst wenn sein Node stark ausgelastet ist
-- **Geplant, noch nicht gebaut**: Ein "Produktiv"-Button, der einen fertigen Workspace in einen dauerhaften, von Coder losgelösten Produktiv-Container exportiert
+- **`dangerously_skip_permissions`** doesn't work while Claude Code runs as `root` (the default in this setup) — worked around via the `IS_SANDBOX=1` environment variable
+- **Watchdog doesn't detect a missing Claude installation**: if the initial install fails entirely (e.g. network error), the watchdog currently only checks whether `agentapi` is running — not whether `claude` itself is installed. Manual reinstallation is required in that case (see Troubleshooting)
+- **No live failover for running workspaces**: node selection only applies at creation time. A running workspace is never automatically migrated to another node, even if its node becomes heavily loaded
+- **Planned, not yet built**: a "Go live" button that exports a finished workspace into a permanent, Coder-independent production container
 
 ---
 
-## Lizenz
+## License
 
-Nutzung auf eigenes Risiko. Kein offizielles Coder- oder Anthropic-Produkt.
+Use at your own risk. Not an official Coder or Anthropic product.
