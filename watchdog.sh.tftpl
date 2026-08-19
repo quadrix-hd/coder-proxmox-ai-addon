@@ -1,0 +1,6 @@
+#!/bin/bash
+export PATH="/root/.local/bin:$PATH"
+export CLAUDE_CODE_OAUTH_TOKEN='${claude_token}'
+if [ -f /tmp/start.sh ] && ! curl -fs -o /dev/null http://localhost:3284/status; then
+  cd /home/coder/project && AGENTAPI_CHAT_BASE_PATH='${chat_base_path}' AGENTAPI_ALLOWED_HOSTS='*' ARG_WORKDIR=/home/coder/project nohup /tmp/start.sh > /tmp/watchdog-restart.log 2>&1 &
+fi
