@@ -36,6 +36,17 @@ variable "claude_code_oauth_token" {
   sensitive = true
 }
 
+variable "skills_repo_token" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+
+variable "skills_repo_path" {
+  type    = string
+  default = "quadrix-hd/claude-skills"
+}
+
 variable "target_node" {
   type    = string
   default = "pve"
@@ -220,9 +231,9 @@ data "coder_parameter" "skip_permissions" {
 
 locals {
   size_presets = {
-    small  = { cores = 1, memory = 1024, disk = "8G" }
-    medium = { cores = 2, memory = 2048, disk = "15G" }
-    large  = { cores = 4, memory = 4096, disk = "20G" }
+    small  = { cores = 1, memory = 1024, disk = "8G", swap = 1024 }
+    medium = { cores = 2, memory = 3072, disk = "15G", swap = 2048 }
+    large  = { cores = 4, memory = 4096, disk = "20G", swap = 2048 }
   }
   chosen = local.size_presets[data.coder_parameter.instance_size.value]
 }
@@ -283,17 +294,17 @@ resource "coder_agent" "main" {
       usermod -aG docker coder || true
     fi
 
-    # Claude Code Skills automatisch nachladen
+    # Claude Code Skills zentral aus privatem Repo nachladen
     mkdir -p /root/.claude/skills
-    if [ ! -d /root/.claude/skills/frontend-design ]; then
-      git clone --depth 1 --filter=blob:none --sparse https://github.com/anthropics/skills.git /tmp/skills-repo 2>/dev/null || true
-      if [ -d /tmp/skills-repo ]; then
-        cd /tmp/skills-repo
-        git sparse-checkout set skills/frontend-design
-        cp -r skills/frontend-design /root/.claude/skills/frontend-design
-        cd /
-        rm -rf /tmp/skills-repo
-      fi
+    rm -rf /tmp/skills-repo
+    git clone --depth 1 "https://${var.skills_repo_token}@github.com/${var.skills_repo_path}.git" /tmp/skills-repo 2>/dev/null || true
+    if [ -d /tmp/skills-repo ]; then
+      for skill_dir in /tmp/skills-repo/*/; do
+        skill_name=$(basename "$skill_dir")
+        rm -rf "/root/.claude/skills/$skill_name"
+        cp -r "$skill_dir" "/root/.claude/skills/$skill_name"
+      done
+      rm -rf /tmp/skills-repo
     fi
   EOT
 }
@@ -308,6 +319,7 @@ resource "proxmox_lxc" "workspace" {
   ostemplate   = "local:vztmpl/ubuntu-ssh-ready.tar.zst"
   cores        = local.chosen.cores
   memory       = local.chosen.memory
+  swap         = local.chosen.swap
   unprivileged = true
   start        = data.coder_workspace.me.start_count == 1
 
