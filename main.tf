@@ -142,13 +142,16 @@ data "coder_parameter" "instance_size" {
   }
 }
 
-data "coder_workspace_preset" "small_pve" {
-  name    = "Klein - 1 CPU / 1GB RAM - pve (mit Rueckfragen)"
+data "coder_workspace_preset" "small_auto_node" {
+  # Default-Preset: setzt bewusst KEIN target_node, damit der dynamische
+  # Default von data.coder_parameter.target_node (der am wenigsten
+  # ausgelastete Knoten) tatsaechlich greift. Wer einen bestimmten Knoten
+  # erzwingen will, nutzt eines der expliziten *_pve/*_pve4-Presets unten.
+  name    = "Klein - 1 CPU / 1GB RAM - automatische Node-Auswahl (mit Rueckfragen)"
   default = true
   parameters = {
     instance_size    = "small"
     skip_permissions = "false"
-    target_node      = "pve"
   }
 }
 
