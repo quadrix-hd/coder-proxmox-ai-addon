@@ -59,11 +59,6 @@ variable "skills_repo_path" {
   default = "quadrix-hd/claude-skills"
 }
 
-variable "target_node" {
-  type    = string
-  default = "pve"
-}
-
 variable "lxc_subnet" {
   type    = string
   default = "10.0.75"
