@@ -10,8 +10,12 @@ INPUT=$(cat)
 API_URL=$(echo "$INPUT" | jq -r '.api_url')
 TOKEN_ID=$(echo "$INPUT" | jq -r '.token_id')
 TOKEN_SECRET=$(echo "$INPUT" | jq -r '.token_secret')
+TLS_INSECURE=$(echo "$INPUT" | jq -r '.tls_insecure // "false"')
 
-RESPONSE=$(curl -sk "${API_URL}/nodes" \
+CURL_OPTS=(-s)
+[ "$TLS_INSECURE" = "true" ] && CURL_OPTS+=(-k)
+
+RESPONSE=$(curl "${CURL_OPTS[@]}" "${API_URL}/nodes" \
   -H "Authorization: PVEAPIToken=${TOKEN_ID}=${TOKEN_SECRET}")
 
 # Proxmox liefert {"data":[{"node":"pve","mem":123,"maxmem":456,...}, ...]}.

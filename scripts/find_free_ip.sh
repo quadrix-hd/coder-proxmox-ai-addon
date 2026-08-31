@@ -13,18 +13,22 @@ END=$(echo "$INPUT" | jq -r '.range_end')
 API_URL=$(echo "$INPUT" | jq -r '.api_url')
 TOKEN_ID=$(echo "$INPUT" | jq -r '.token_id')
 TOKEN_SECRET=$(echo "$INPUT" | jq -r '.token_secret')
+TLS_INSECURE=$(echo "$INPUT" | jq -r '.tls_insecure // "false"')
 AUTH_HEADER="Authorization: PVEAPIToken=${TOKEN_ID}=${TOKEN_SECRET}"
 SUBNET_RE="${SUBNET//./\\.}"
+
+CURL_OPTS=(-s)
+[ "$TLS_INSECURE" = "true" ] && CURL_OPTS+=(-k)
 
 # Statt Ping-Sweep: die tatsaechlich in Proxmox konfigurierten IPs aller
 # VMs/LXCs im Cluster auslesen. Erkennt auch gestoppte Container (die auf
 # Ping nicht antworten wuerden, ihre IP aber weiterhin "besitzen").
-RESOURCES=$(curl -sk "${API_URL}/cluster/resources?type=vm" -H "$AUTH_HEADER")
+RESOURCES=$(curl "${CURL_OPTS[@]}" "${API_URL}/cluster/resources?type=vm" -H "$AUTH_HEADER")
 
 USED_IPS=""
 while IFS=$'\t' read -r NODE VMID TYPE; do
   [ -z "$NODE" ] && continue
-  CONFIG=$(curl -sk "${API_URL}/nodes/${NODE}/${TYPE}/${VMID}/config" -H "$AUTH_HEADER" || true)
+  CONFIG=$(curl "${CURL_OPTS[@]}" "${API_URL}/nodes/${NODE}/${TYPE}/${VMID}/config" -H "$AUTH_HEADER" || true)
   FOUND=$(echo "$CONFIG" | grep -oE "ip=${SUBNET_RE}\.[0-9]+" | cut -d= -f2 || true)
   USED_IPS="${USED_IPS}
 ${FOUND}"

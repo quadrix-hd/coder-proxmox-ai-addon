@@ -230,6 +230,38 @@ The demo button expects the website on **port 8080** (`localhost:8080` inside th
 
 ---
 
+## Optional: SDN + IPAM (atomic IP allocation)
+
+By default (`use_sdn_ipam = false`), IP allocation works the way described above: `find_free_ip.sh` reads the IPs actually configured on every VM/LXC via the Proxmox API and picks the first one that's free. That's reliable, but not fully atomic — two `terraform apply` runs racing at the exact same moment could in theory still pick the same IP (see "Known open issues").
+
+Proxmox's built-in SDN + IPAM stack closes that gap: the PVE IPAM plugin locks its database (`cfs_lock_file`) while checking and writing an allocation, and rejects a request for an IP that's already taken (`"IP already exist"`). That makes "try to claim IP X, move to X+1 on conflict" a genuinely atomic operation. This template can use it, opt-in.
+
+### One-time Proxmox setup
+
+In the Proxmox web UI, under **Datacenter → SDN**:
+
+1. **Zones** → Add a zone (e.g. `ws` of type "Simple" is enough if you just want IPAM bookkeeping on your existing bridge/VLAN — you don't have to migrate to VXLAN/EVPN for this).
+2. **VNets** → Add a VNet inside that zone (e.g. `wsnet`).
+3. **Subnets** (under that VNet) → Add a subnet matching your `lxc_subnet`, e.g. `10.0.75.0/24`. Leave "DHCP Ranges" empty — allocation happens via the API, not DHCP.
+4. **Apply** the SDN configuration (there's an "Apply" button in the SDN overview — changes are staged until you click it).
+
+The built-in IPAM plugin (id `pve`) is available by default, no extra plugin setup needed.
+
+### Enable it in the template
+
+```bash
+coder templates push lxc-claude-task -d . --variables-file secrets.tfvars \
+  --variable use_sdn_ipam=true \
+  --variable sdn_zone='ws' \
+  --variable sdn_vnet='wsnet'
+```
+
+(Or add `use_sdn_ipam`, `sdn_zone`, `sdn_vnet` to your `secrets.tfvars` — they're not secret, just easier to keep alongside the rest.)
+
+**Test this on a throwaway workspace first.** This changes how the container's network interface is configured (a fixed `hwaddr` is now set, matching the MAC registered in IPAM) and adds a destroy-time cleanup step (`scripts/release_sdn_ip.sh`) that releases the IPAM reservation when a workspace is deleted. If that cleanup ever fails (e.g. Proxmox unreachable at delete time), it only logs a warning — it won't block the delete — but you may need to remove the stale entry manually under **Datacenter → SDN → IPAM**.
+
+---
+
 ## Template structure
 
 ```
@@ -237,8 +269,10 @@ The demo button expects the website on **port 8080** (`localhost:8080` inside th
 ├── main.tf                       Main template
 ├── watchdog.sh.tftpl              Keeps Claude Code/agentapi running reliably
 └── scripts/
-    ├── find_free_ip.sh            IP assignment, backed by the Proxmox API (not ping)
-    └── get_cluster_load.sh        Live load display for multi-node selection, any cluster size
+    ├── find_free_ip.sh            Default IP assignment, backed by the Proxmox API (not ping)
+    ├── get_cluster_load.sh        Live load display for multi-node selection, any cluster size
+    ├── allocate_sdn_ip.sh         Optional: atomic IP allocation via Proxmox SDN + IPAM
+    └── release_sdn_ip.sh          Optional: releases the SDN+IPAM reservation on workspace destroy
 ```
 
 ### Key design decisions
@@ -276,6 +310,8 @@ The Coder agent token and the Claude OAuth token are written once to `/etc/coder
 | Claude Code fails to install / `ECONNREFUSED downloads.claude.ai` | Brief network hiccup, often when creating workspaces in parallel | Reinstall manually: `curl -fsSL https://claude.ai/install.sh -o /tmp/i.sh && bash /tmp/i.sh`, then trigger the watchdog |
 | `scripts/*.sh` fail with "jq ist nicht installiert" | `jq` missing on the Coder host | `apt-get install -y jq` (or your distro's equivalent) on the host running `terraform`/`coder templates push` |
 | `terraform plan`/`push` fails with a TLS error against Proxmox | `pm_tls_insecure` is now `false` by default | Import the Proxmox certificate (see "1.3 Trust the Proxmox certificate"), or explicitly pass `pm_tls_insecure=true` if you accept the risk |
+| `allocate_sdn_ip.sh` fails with "sdn_zone/sdn_vnet sind nicht gesetzt" | `use_sdn_ipam=true` without `sdn_zone`/`sdn_vnet` | Pass both variables (see "Optional: SDN + IPAM") |
+| `allocate_sdn_ip.sh` fails with a 5xx that isn't "IP already exist" | Zone/VNet/Subnet not set up correctly, or the token lacks `SDN.Allocate` permission | Check **Datacenter → SDN** is applied, and that the API token's role includes `SDN.Allocate` on `/sdn/zones/<zone>/<vnet>` |
 
 ---
 
@@ -284,7 +320,7 @@ The Coder agent token and the Claude OAuth token are written once to `/etc/coder
 - **`dangerously_skip_permissions`** doesn't work while Claude Code runs as `root` (the default in this setup) — worked around via the `IS_SANDBOX=1` environment variable
 - **Watchdog doesn't detect a missing Claude installation**: if the initial install fails entirely (e.g. network error), the watchdog currently only checks whether `agentapi` is running — not whether `claude` itself is installed. Manual reinstallation is required in that case (see Troubleshooting)
 - **No live failover for running workspaces**: node selection only applies at creation time. A running workspace is never automatically migrated to another node, even if its node becomes heavily loaded
-- **IP allocation is API-driven but not fully atomic**: `find_free_ip.sh` now reads the actually-configured IPs from every VM/LXC via the Proxmox API instead of pinging, which is far more reliable, but two `terraform apply` runs racing at the exact same moment could in theory still pick the same "free" IP — Proxmox has no built-in "claim this IP" primitive outside of SDN. A structural fix would be Proxmox SDN with an IPAM-backed subnet (Zone/VNet/Subnet + the built-in PVE IPAM plugin), which hands out addresses atomically via its own API. That requires a one-time SDN setup on the Proxmox side (comparable in scope to "1. Prepare Proxmox" above) plus reworking `find_free_ip.sh` to call the IPAM allocation endpoint instead — not done yet, tracked as a follow-up. Note: the `telmate/proxmox` provider pinned here also can't read back a container's IP when `network.ip = "dhcp"` ([open upstream issue](https://github.com/Telmate/terraform-provider-proxmox/issues/1453)), so any SDN-based approach still needs to pre-allocate the IP via the IPAM API and assign it statically, rather than letting the container DHCP it at boot.
+- **IP allocation is atomic only if you opt into SDN+IPAM**: by default, `find_free_ip.sh` reads the actually-configured IPs from every VM/LXC via the Proxmox API instead of pinging, which is far more reliable than ping, but two `terraform apply` runs racing at the exact same moment could in theory still pick the same "free" IP. Setting `use_sdn_ipam = true` (see "Optional: SDN + IPAM" above) closes this gap using Proxmox's own IPAM locking — but it's opt-in, not the default, since it needs a one-time SDN setup on the Proxmox side first. Note: the `telmate/proxmox` provider pinned here can't read back a container's IP when `network.ip = "dhcp"` ([open upstream issue](https://github.com/Telmate/terraform-provider-proxmox/issues/1453)), which is why even the SDN path pre-allocates the IP via the IPAM API and assigns it statically, rather than letting the container DHCP it at boot.
 - **Planned, not yet built**: a "Go live" button that exports a finished workspace into a permanent, Coder-independent production container
 
 ---

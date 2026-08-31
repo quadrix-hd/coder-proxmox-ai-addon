@@ -12,6 +12,10 @@ terraform {
       source  = "hashicorp/external"
       version = "~> 2.4"
     }
+    null = {
+      source  = "hashicorp/null"
+      version = "~> 3.2"
+    }
   }
 }
 
@@ -73,6 +77,24 @@ variable "lxc_gateway" {
 variable "lxc_vlan_tag" {
   type    = number
   default = 75
+}
+
+variable "use_sdn_ipam" {
+  type        = bool
+  description = "IP-Vergabe atomar ueber Proxmox SDN + IPAM statt ueber die Ist-Abfrage der Guest-Configs. Erfordert eine einmalige SDN-Einrichtung in Proxmox (Zone/VNet/Subnet), siehe README, Abschnitt 'SDN + IPAM'. Default false: die bisherige, getestete API-Abfrage bleibt unveraendert aktiv."
+  default     = false
+}
+
+variable "sdn_zone" {
+  type        = string
+  description = "Name der Proxmox-SDN-Zone. Nur relevant, wenn use_sdn_ipam=true."
+  default     = ""
+}
+
+variable "sdn_vnet" {
+  type        = string
+  description = "Name des Proxmox-SDN-VNet innerhalb der Zone. Nur relevant, wenn use_sdn_ipam=true."
+  default     = ""
 }
 
 # ---------------------------------------------------------
@@ -256,6 +278,7 @@ data "external" "cluster_load" {
     api_url      = var.pm_api_url
     token_id     = var.pm_api_token_id
     token_secret = var.pm_api_token_secret
+    tls_insecure = var.pm_tls_insecure ? "true" : "false"
   }
 }
 
@@ -284,6 +307,7 @@ data "coder_parameter" "target_node" {
 }
 
 data "external" "free_ip" {
+  count   = var.use_sdn_ipam ? 0 : 1
   program = ["bash", "${path.module}/scripts/find_free_ip.sh"]
   query = {
     subnet       = var.lxc_subnet
@@ -292,7 +316,34 @@ data "external" "free_ip" {
     api_url      = var.pm_api_url
     token_id     = var.pm_api_token_id
     token_secret = var.pm_api_token_secret
+    tls_insecure = var.pm_tls_insecure ? "true" : "false"
   }
+}
+
+# Alternative, atomare IP-Vergabe ueber Proxmox SDN + IPAM (opt-in via
+# use_sdn_ipam). Braucht das Ziel-Node schon vor der LXC-Erstellung, daher
+# die Abhaengigkeit von data.coder_parameter.target_node statt dem
+# proxmox_lxc-Resource selbst.
+data "external" "free_ip_sdn" {
+  count   = var.use_sdn_ipam ? 1 : 0
+  program = ["bash", "${path.module}/scripts/allocate_sdn_ip.sh"]
+  query = {
+    subnet       = var.lxc_subnet
+    range_start  = "100"
+    range_end    = "200"
+    api_url      = var.pm_api_url
+    token_id     = var.pm_api_token_id
+    token_secret = var.pm_api_token_secret
+    tls_insecure = var.pm_tls_insecure ? "true" : "false"
+    node         = data.coder_parameter.target_node.value
+    zone         = var.sdn_zone
+    vnet         = var.sdn_vnet
+  }
+}
+
+locals {
+  workspace_ip  = var.use_sdn_ipam ? data.external.free_ip_sdn[0].result.ip : data.external.free_ip[0].result.ip
+  workspace_mac = var.use_sdn_ipam ? data.external.free_ip_sdn[0].result.mac : null
 }
 
 # ---------------------------------------------------------
@@ -366,8 +417,9 @@ resource "proxmox_lxc" "workspace" {
     name   = "eth0"
     bridge = "vmbr0"
     tag    = var.lxc_vlan_tag
-    ip     = "${data.external.free_ip.result.ip}/24"
+    ip     = "${local.workspace_ip}/24"
     gw     = var.lxc_gateway
+    hwaddr = local.workspace_mac
   }
 
   ssh_public_keys = file("/home/coder/.ssh/id_rsa.pub")
@@ -376,7 +428,7 @@ resource "proxmox_lxc" "workspace" {
     type        = "ssh"
     user        = "root"
     private_key = file("/home/coder/.ssh/id_rsa")
-    host        = data.external.free_ip.result.ip
+    host        = local.workspace_ip
     timeout     = "10m"
   }
 
@@ -398,6 +450,43 @@ resource "proxmox_lxc" "workspace" {
       "chmod +x /usr/local/bin/agentapi-watchdog.sh",
       "bash -c \"cat > /etc/cron.d/agentapi-watchdog <<'CRON_EOF'\n* * * * * root sleep 20 && /usr/local/bin/agentapi-watchdog.sh\nCRON_EOF\"",
     ]
+  }
+}
+
+# Gibt eine ueber SDN+IPAM reservierte IP beim Zerstoeren des Workspaces
+# wieder frei. Nur relevant wenn use_sdn_ipam=true (siehe free_ip_sdn oben);
+# scripts/find_free_ip.sh (der Default-Pfad) braucht kein Gegenstueck, weil
+# es nichts reserviert, sondern nur den Ist-Zustand abfragt.
+resource "null_resource" "sdn_ip_release" {
+  count = var.use_sdn_ipam ? 1 : 0
+
+  triggers = {
+    script       = "${path.module}/scripts/release_sdn_ip.sh"
+    api_url      = var.pm_api_url
+    token_id     = var.pm_api_token_id
+    token_secret = var.pm_api_token_secret
+    tls_insecure = var.pm_tls_insecure ? "true" : "false"
+    node         = data.coder_parameter.target_node.value
+    zone         = var.sdn_zone
+    vnet         = var.sdn_vnet
+    ip           = data.external.free_ip_sdn[0].result.ip
+    mac          = data.external.free_ip_sdn[0].result.mac
+  }
+
+  provisioner "local-exec" {
+    when    = destroy
+    command = "bash '${self.triggers.script}'"
+    environment = {
+      API_URL      = self.triggers.api_url
+      TOKEN_ID     = self.triggers.token_id
+      TOKEN_SECRET = self.triggers.token_secret
+      TLS_INSECURE = self.triggers.tls_insecure
+      NODE         = self.triggers.node
+      ZONE         = self.triggers.zone
+      VNET         = self.triggers.vnet
+      IP           = self.triggers.ip
+      MAC          = self.triggers.mac
+    }
   }
 }
 
