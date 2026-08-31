@@ -16,6 +16,7 @@ A Coder template that automatically spins up a Proxmox LXC workspace with Claude
 - A running **Coder server** (Docker, see the [official Coder docs](https://coder.com/docs))
 - **Proxmox VE** (single node or cluster)
 - A **Claude Pro or Max subscription** (for the OAuth token)
+- `jq` installed on the Coder host (used by `scripts/get_cluster_load.sh` and `scripts/find_free_ip.sh` to talk to the Proxmox API)
 - Basic familiarity with Terraform/Proxmox
 
 ---
@@ -68,6 +69,21 @@ pct set 9000 --template 1
 vzdump 9000 --mode stop --compress zstd --dumpdir /var/lib/vz/dump
 cp /var/lib/vz/dump/vzdump-lxc-9000-*.tar.zst /var/lib/vz/template/cache/ubuntu-ssh-ready.tar.zst
 ```
+
+### 1.3 Trust the Proxmox certificate (instead of disabling TLS verification)
+
+By default `pm_tls_insecure = false` — the template expects the Coder host to actually trust Proxmox's certificate rather than skipping verification entirely. Proxmox ships a self-signed certificate by default, so import it once on the Docker host running Coder:
+
+```bash
+# On the Proxmox host: grab the certificate
+openssl s_client -connect YOUR-PROXMOX-IP:8006 -showcerts </dev/null 2>/dev/null | openssl x509 > proxmox.crt
+
+# On the Coder/Docker host: trust it
+sudo cp proxmox.crt /usr/local/share/ca-certificates/proxmox.crt
+sudo update-ca-certificates
+```
+
+If you're running Coder itself inside a container, the certificate needs to be trusted **inside that container's** trust store, not just the Docker host's. Only if importing a real/self-signed certificate genuinely isn't possible in your setup, fall back to `pm_tls_insecure = true` on the `coder templates push` — understand that this disables TLS verification against the Proxmox API entirely.
 
 ---
 
@@ -161,7 +177,7 @@ In `main.tf`, adjust these defaults to your environment:
 | `target_node` | `variable "target_node"` | Your Proxmox node name |
 | `lxc_subnet`, `lxc_gateway`, `lxc_vlan_tag` | respective variables | Your network for the workspaces |
 
-If you have **two Proxmox nodes** (cluster) and want to use node selection: adjust `PREFERRED_NODE` and `FAILOVER_NODE` in `scripts/get_cluster_load.sh`, and update every `"pve"`/`"pve4"` occurrence in `main.tf` to your real node names.
+If you have a Proxmox **cluster** and want to use node selection: the node dropdown is generated automatically from whatever `/nodes` returns — no per-node script edits needed. Only the `coder_workspace_preset` blocks in `main.tf` still hardcode `"pve"`/`"pve4"` as convenience shortcuts; update those (or add/remove presets) to match your real node names if you want preset-level node pinning.
 
 ### 5.3 Install the Coder CLI and log in
 
@@ -172,17 +188,23 @@ coder login https://your-coder-url.com
 
 ### 5.4 Push the template
 
-```bash
-coder templates push lxc-claude-task -d . \
-  --variable pm_api_token_id='root@pam!terraform' \
-  --variable pm_api_token_secret='YOUR-PROXMOX-TOKEN-SECRET' \
-  --variable claude_code_oauth_token='YOUR-CLAUDE-OAUTH-TOKEN' \
-  --variable lxc_subnet='10.0.75' \
-  --variable lxc_gateway='10.0.75.1' \
-  --variable lxc_vlan_tag='75'
+Put your secrets in a gitignored `secrets.tfvars` file (`*.tfvars` is already excluded via `.gitignore`) instead of passing them inline — inline `--variable` values land in your shell history:
+
+```hcl
+# secrets.tfvars — never commit this file
+pm_api_token_id         = "root@pam!terraform"
+pm_api_token_secret     = "YOUR-PROXMOX-TOKEN-SECRET"
+claude_code_oauth_token = "YOUR-CLAUDE-OAUTH-TOKEN"
+lxc_subnet              = "10.0.75"
+lxc_gateway             = "10.0.75.1"
+lxc_vlan_tag            = 75
 ```
 
-> **Important:** All variables must be passed explicitly on **every** push — otherwise Coder silently keeps reusing the last value, even if the default in `main.tf` has changed.
+```bash
+coder templates push lxc-claude-task -d . --variables-file secrets.tfvars
+```
+
+> **Important:** All variables must be set explicitly on **every** push — otherwise Coder silently keeps reusing the last value, even if the default in `main.tf` has changed. Keep `secrets.tfvars` up to date and pass it every time.
 
 ---
 
@@ -215,8 +237,8 @@ The demo button expects the website on **port 8080** (`localhost:8080` inside th
 ├── main.tf                       Main template
 ├── watchdog.sh.tftpl              Keeps Claude Code/agentapi running reliably
 └── scripts/
-    ├── find_free_ip.sh            Automatic IP assignment within the VLAN
-    └── get_cluster_load.sh        Live load display for multi-node selection
+    ├── find_free_ip.sh            IP assignment, backed by the Proxmox API (not ping)
+    └── get_cluster_load.sh        Live load display for multi-node selection, any cluster size
 ```
 
 ### Key design decisions
@@ -233,6 +255,12 @@ Originally, `count = data.coder_workspace.me.start_count` destroyed the entire c
 **`coder_parameter` vs. `coder_workspace_preset`**
 The Tasks flow (AI prompt text field) doesn't display raw `coder_parameter` values (official Coder behavior). Size and mode selection therefore goes through `coder_workspace_preset` blocks (note: `data` block, not `resource`).
 
+**Scripts talk to the Proxmox API, not to the network directly**
+`find_free_ip.sh` and `get_cluster_load.sh` both call the Proxmox REST API (with `jq` for JSON parsing) instead of doing ICMP pings or ad-hoc string parsing. `get_cluster_load.sh` returns every node in the cluster (not a hardcoded pair), so the node dropdown (`data.coder_parameter.target_node` in `main.tf`) is generated dynamically via a `dynamic "option"` block. `find_free_ip.sh` determines "used" IPs from the actual `net0`/`ipconfig0` config of every VM/LXC in the cluster rather than pinging — this also catches stopped containers, which don't respond to ping but still hold their IP. Note: this still isn't a fully atomic reservation between two simultaneous `terraform apply` runs; see "Known open issues" below.
+
+**Secrets live in one file on the workspace, not scattered across several**
+The Coder agent token and the Claude OAuth token are written once to `/etc/coder-agent.env` (`chmod 600`, root-only) inside the LXC, and both the `coder-agent` systemd service (via `EnvironmentFile=`) and the watchdog script source that same file — instead of each having their own copy of the secrets on disk.
+
 ---
 
 ## Troubleshooting
@@ -241,12 +269,13 @@ The Tasks flow (AI prompt text field) doesn't display raw `coder_parameter` valu
 |---|---|---|
 | SSH timeout during creation | Network/switch delay on first boot | Wait, optionally increase the timeout in the template |
 | `agentapi` 502 in web UI | Watchdog hasn't kicked in yet | Wait 1–2 min, cron runs every minute |
-| Claude asks to log in | OAuth token missing/wrong in the watchdog | Check the token in `watchdog.sh.tftpl` |
+| Claude asks to log in | OAuth token missing/wrong | Check `/etc/coder-agent.env` inside the LXC (`cat /etc/coder-agent.env`) |
 | "Invalid host header" | `AGENTAPI_ALLOWED_HOSTS` missing | Set in the watchdog script, verify it |
 | Demo button greyed out | `subdomain = true` without wildcard DNS configured | Set to `subdomain = false` |
 | "vm not found" during creation | Known bug in the provider's `clone` attribute | Use `ostemplate` instead of `clone` |
 | Claude Code fails to install / `ECONNREFUSED downloads.claude.ai` | Brief network hiccup, often when creating workspaces in parallel | Reinstall manually: `curl -fsSL https://claude.ai/install.sh -o /tmp/i.sh && bash /tmp/i.sh`, then trigger the watchdog |
-| Decimal-comma error in `awk` (cluster load script) | German locale on the Coder host | Prefix every `awk` call with `LC_NUMERIC=C` (already included in the script) |
+| `scripts/*.sh` fail with "jq ist nicht installiert" | `jq` missing on the Coder host | `apt-get install -y jq` (or your distro's equivalent) on the host running `terraform`/`coder templates push` |
+| `terraform plan`/`push` fails with a TLS error against Proxmox | `pm_tls_insecure` is now `false` by default | Import the Proxmox certificate (see "1.3 Trust the Proxmox certificate"), or explicitly pass `pm_tls_insecure=true` if you accept the risk |
 
 ---
 
@@ -255,6 +284,7 @@ The Tasks flow (AI prompt text field) doesn't display raw `coder_parameter` valu
 - **`dangerously_skip_permissions`** doesn't work while Claude Code runs as `root` (the default in this setup) — worked around via the `IS_SANDBOX=1` environment variable
 - **Watchdog doesn't detect a missing Claude installation**: if the initial install fails entirely (e.g. network error), the watchdog currently only checks whether `agentapi` is running — not whether `claude` itself is installed. Manual reinstallation is required in that case (see Troubleshooting)
 - **No live failover for running workspaces**: node selection only applies at creation time. A running workspace is never automatically migrated to another node, even if its node becomes heavily loaded
+- **IP allocation is API-driven but not fully atomic**: `find_free_ip.sh` now reads the actually-configured IPs from every VM/LXC via the Proxmox API instead of pinging, which is far more reliable, but two `terraform apply` runs racing at the exact same moment could in theory still pick the same "free" IP — Proxmox has no built-in "claim this IP" primitive outside of SDN. A structural fix would be Proxmox SDN with an IPAM-backed subnet (Zone/VNet/Subnet + the built-in PVE IPAM plugin), which hands out addresses atomically via its own API. That requires a one-time SDN setup on the Proxmox side (comparable in scope to "1. Prepare Proxmox" above) plus reworking `find_free_ip.sh` to call the IPAM allocation endpoint instead — not done yet, tracked as a follow-up. Note: the `telmate/proxmox` provider pinned here also can't read back a container's IP when `network.ip = "dhcp"` ([open upstream issue](https://github.com/Telmate/terraform-provider-proxmox/issues/1453)), so any SDN-based approach still needs to pre-allocate the IP via the IPAM API and assign it statically, rather than letting the container DHCP it at boot.
 - **Planned, not yet built**: a "Go live" button that exports a finished workspace into a permanent, Coder-independent production container
 
 ---

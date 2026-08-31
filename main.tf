@@ -1,14 +1,16 @@
 terraform {
   required_providers {
     coder = {
-      source = "coder/coder"
+      source  = "coder/coder"
+      version = "~> 2.0"
     }
     proxmox = {
       source  = "telmate/proxmox"
       version = "3.0.2-rc05"
     }
     external = {
-      source = "hashicorp/external"
+      source  = "hashicorp/external"
+      version = "~> 2.4"
     }
   }
 }
@@ -29,6 +31,12 @@ variable "pm_api_token_id" {
 variable "pm_api_token_secret" {
   type      = string
   sensitive = true
+}
+
+variable "pm_tls_insecure" {
+  type        = bool
+  description = "TLS-Zertifikatspruefung gegen die Proxmox-API. Nur auf true setzen, wenn kein Zertifikat importiert werden kann (siehe README, Abschnitt 'Prepare Proxmox')."
+  default     = false
 }
 
 variable "claude_code_oauth_token" {
@@ -75,7 +83,7 @@ provider "proxmox" {
   pm_api_url          = var.pm_api_url
   pm_api_token_id     = var.pm_api_token_id
   pm_api_token_secret = var.pm_api_token_secret
-  pm_tls_insecure     = true
+  pm_tls_insecure     = var.pm_tls_insecure
 }
 
 # ---------------------------------------------------------
@@ -232,7 +240,7 @@ data "coder_parameter" "skip_permissions" {
 locals {
   size_presets = {
     small  = { cores = 1, memory = 1024, disk = "8G", swap = 1024 }
-    medium = { cores = 2, memory = 3072, disk = "15G", swap = 2048 }
+    medium = { cores = 2, memory = 2048, disk = "15G", swap = 4096 }
     large  = { cores = 4, memory = 4096, disk = "20G", swap = 2048 }
   }
   chosen = local.size_presets[data.coder_parameter.instance_size.value]
@@ -251,30 +259,39 @@ data "external" "cluster_load" {
   }
 }
 
+locals {
+  # scripts/get_cluster_load.sh liefert die Knotenliste als JSON-String
+  # (die "external"-Data-Source kann nur flache String-Maps zurueckgeben),
+  # hier wird sie fuer den dynamischen Dropdown wieder dekodiert.
+  cluster_nodes = jsondecode(data.external.cluster_load.result.nodes_json)
+}
+
 data "coder_parameter" "target_node" {
   name         = "target_node"
   display_name = "Proxmox-Node"
-  description  = "Auslastung wird live angezeigt (RAM-Nutzung)."
+  description  = "Auslastung wird live angezeigt (RAM-Nutzung), Liste wird automatisch aus dem Cluster ermittelt."
   type         = "string"
-  default      = "pve"
+  default      = data.external.cluster_load.result.default_node
   mutable      = false
 
-  option {
-    name  = "${data.external.cluster_load.result.node1_name} (${data.external.cluster_load.result.node1_load}% RAM ausgelastet)"
-    value = data.external.cluster_load.result.node1_name
-  }
-  option {
-    name  = "${data.external.cluster_load.result.node2_name} (${data.external.cluster_load.result.node2_load}% RAM ausgelastet)"
-    value = data.external.cluster_load.result.node2_name
+  dynamic "option" {
+    for_each = local.cluster_nodes
+    content {
+      name  = "${option.value.name} (${option.value.load}% RAM ausgelastet)"
+      value = option.value.name
+    }
   }
 }
 
 data "external" "free_ip" {
   program = ["bash", "${path.module}/scripts/find_free_ip.sh"]
   query = {
-    subnet      = var.lxc_subnet
-    range_start = "100"
-    range_end   = "200"
+    subnet       = var.lxc_subnet
+    range_start  = "100"
+    range_end    = "200"
+    api_url      = var.pm_api_url
+    token_id     = var.pm_api_token_id
+    token_secret = var.pm_api_token_secret
   }
 }
 
@@ -295,9 +312,18 @@ resource "coder_agent" "main" {
     fi
 
     # Claude Code Skills zentral aus privatem Repo nachladen
+    # (Token laeuft ueber GIT_ASKPASS statt in der Klartext-URL, damit es nicht in
+    #  der Prozessliste (ps aux) des git-Subprozesses auftaucht)
     mkdir -p /root/.claude/skills
     rm -rf /tmp/skills-repo
-    git clone --depth 1 "https://${var.skills_repo_token}@github.com/${var.skills_repo_path}.git" /tmp/skills-repo 2>/dev/null || true
+    if [ -n "${var.skills_repo_token}" ]; then
+      SKILLS_ASKPASS=$(mktemp)
+      printf '#!/bin/bash\nprintf "%%s" "%s"\n' "${var.skills_repo_token}" > "$SKILLS_ASKPASS"
+      chmod 700 "$SKILLS_ASKPASS"
+      GIT_ASKPASS="$SKILLS_ASKPASS" GIT_TERMINAL_PROMPT=0 \
+        git clone --depth 1 "https://x-access-token@github.com/${var.skills_repo_path}.git" /tmp/skills-repo 2>/dev/null || true
+      rm -f "$SKILLS_ASKPASS"
+    fi
     if [ -d /tmp/skills-repo ]; then
       for skill_dir in /tmp/skills-repo/*/; do
         skill_name=$(basename "$skill_dir")
@@ -361,10 +387,14 @@ resource "proxmox_lxc" "workspace" {
       "mkdir -p /opt/coder",
       "echo '${base64encode(coder_agent.main.init_script)}' | base64 -d > /opt/coder/init.sh",
       "chmod +x /opt/coder/init.sh",
-      "bash -c \"cat > /etc/systemd/system/coder-agent.service <<'UNIT_EOF'\n[Unit]\nDescription=Coder Agent\nAfter=network-online.target\n\n[Service]\nType=simple\nUser=root\nEnvironment=CODER_AGENT_TOKEN=${coder_agent.main.token}\nEnvironment=CLAUDE_CODE_OAUTH_TOKEN=${var.claude_code_oauth_token}\nEnvironment=IS_SANDBOX=1\nExecStart=/opt/coder/init.sh\nRestart=always\nRestartSec=5\n\n[Install]\nWantedBy=multi-user.target\nUNIT_EOF\"",
+      # Secrets liegen nur noch in dieser einen Datei (statt doppelt in Unit + Watchdog-Skript),
+      # umask 077 sorgt dafuer, dass sie nie mit laxeren Rechten als 600 entsteht.
+      "bash -c \"umask 077; printf 'CODER_AGENT_TOKEN=%s\\nCLAUDE_CODE_OAUTH_TOKEN=%s\\n' '${coder_agent.main.token}' '${var.claude_code_oauth_token}' > /etc/coder-agent.env\"",
+      "chmod 600 /etc/coder-agent.env",
+      "bash -c \"cat > /etc/systemd/system/coder-agent.service <<'UNIT_EOF'\n[Unit]\nDescription=Coder Agent\nAfter=network-online.target\n\n[Service]\nType=simple\nUser=root\nEnvironmentFile=/etc/coder-agent.env\nEnvironment=IS_SANDBOX=1\nExecStart=/opt/coder/init.sh\nRestart=always\nRestartSec=5\n\n[Install]\nWantedBy=multi-user.target\nUNIT_EOF\"",
       "systemctl daemon-reload",
       "systemctl enable --now coder-agent.service",
-      "echo '${base64encode(templatefile("${path.module}/watchdog.sh.tftpl", { chat_base_path = "/@${data.coder_workspace_owner.me.name}/${data.coder_workspace.me.name}.${data.coder_workspace.me.id}/apps/ccw/chat", claude_token = var.claude_code_oauth_token }))}' | base64 -d > /usr/local/bin/agentapi-watchdog.sh",
+      "echo '${base64encode(templatefile("${path.module}/watchdog.sh.tftpl", { chat_base_path = "/@${data.coder_workspace_owner.me.name}/${data.coder_workspace.me.name}.${data.coder_workspace.me.id}/apps/ccw/chat" }))}' | base64 -d > /usr/local/bin/agentapi-watchdog.sh",
       "chmod +x /usr/local/bin/agentapi-watchdog.sh",
       "bash -c \"cat > /etc/cron.d/agentapi-watchdog <<'CRON_EOF'\n* * * * * root sleep 20 && /usr/local/bin/agentapi-watchdog.sh\nCRON_EOF\"",
     ]
@@ -380,13 +410,13 @@ resource "coder_ai_task" "task" {
 }
 
 module "claude-code" {
-  source                  = "registry.coder.com/coder/claude-code/coder"
-  version                 = "4.7.3"
-  agent_id                = coder_agent.main.id
-  workdir                 = "/home/coder/project"
-  claude_code_oauth_token = var.claude_code_oauth_token
-  ai_prompt               = data.coder_task.me.prompt
-  model                   = "sonnet"
+  source                       = "registry.coder.com/coder/claude-code/coder"
+  version                      = "4.7.3"
+  agent_id                     = coder_agent.main.id
+  workdir                      = "/home/coder/project"
+  claude_code_oauth_token      = var.claude_code_oauth_token
+  ai_prompt                    = data.coder_task.me.prompt
+  model                        = "sonnet"
   dangerously_skip_permissions = data.coder_parameter.skip_permissions.value == "true"
 }
 

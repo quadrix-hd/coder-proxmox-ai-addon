@@ -1,55 +1,35 @@
 #!/bin/bash
-set -e
-INPUT=$(cat)
-API_URL=$(echo "$INPUT" | sed -n 's/.*"api_url":"\([^"]*\)".*/\1/p')
-TOKEN_ID=$(echo "$INPUT" | sed -n 's/.*"token_id":"\([^"]*\)".*/\1/p')
-TOKEN_SECRET=$(echo "$INPUT" | sed -n 's/.*"token_secret":"\([^"]*\)".*/\1/p')
+set -euo pipefail
 
-PREFERRED_NODE="pve"
-FAILOVER_NODE="pve4"
-THRESHOLD=90
+command -v jq >/dev/null 2>&1 || {
+  echo "jq ist nicht installiert (siehe README, Abschnitt Prerequisites)" >&2
+  exit 1
+}
+
+INPUT=$(cat)
+API_URL=$(echo "$INPUT" | jq -r '.api_url')
+TOKEN_ID=$(echo "$INPUT" | jq -r '.token_id')
+TOKEN_SECRET=$(echo "$INPUT" | jq -r '.token_secret')
 
 RESPONSE=$(curl -sk "${API_URL}/nodes" \
   -H "Authorization: PVEAPIToken=${TOKEN_ID}=${TOKEN_SECRET}")
 
-LINES=$(echo "$RESPONSE" | sed 's/},{/}\n{/g')
+# Proxmox liefert {"data":[{"node":"pve","mem":123,"maxmem":456,...}, ...]}.
+# Ergebnis wird nach Auslastung aufsteigend sortiert, dadurch ist der erste
+# Eintrag automatisch der am wenigsten ausgelastete Knoten (= Default).
+NODES_JSON=$(echo "$RESPONSE" | jq -c '
+  [.data[]
+    | select(.mem != null and .maxmem != null and .maxmem > 0)
+    | {name: .node, load: ((.mem / .maxmem * 100 * 10 | round) / 10)}
+  ] | sort_by(.load)
+' 2>/dev/null || echo "")
 
-RESULT="{"
-i=1
-PREFERRED_PCT=""
-
-while IFS= read -r LINE; do
-  NODE=$(echo "$LINE" | sed -n 's/.*"node":"\([^"]*\)".*/\1/p')
-  MEM=$(echo "$LINE" | sed -n 's/.*"mem":\([0-9]*\).*/\1/p')
-  MAXMEM=$(echo "$LINE" | sed -n 's/.*"maxmem":\([0-9]*\).*/\1/p')
-
-  if [ -z "$NODE" ] || [ -z "$MEM" ] || [ -z "$MAXMEM" ]; then
-    continue
-  fi
-
-  PCT=$(LC_NUMERIC=C awk "BEGIN { printf \"%.1f\", ($MEM/$MAXMEM)*100 }")
-  RESULT="${RESULT}\"node${i}_name\":\"${NODE}\",\"node${i}_load\":\"${PCT}\","
-
-  if [ "$NODE" = "$PREFERRED_NODE" ]; then
-    PREFERRED_PCT=$PCT
-  fi
-
-  i=$((i+1))
-done <<EOF
-$LINES
-EOF
-
-if [ -z "$PREFERRED_PCT" ]; then
-  PREFERRED_PCT=0
+if [ -z "$NODES_JSON" ] || [ "$NODES_JSON" = "[]" ] || [ "$NODES_JSON" = "null" ]; then
+  echo "Keine (verwertbaren) Knotendaten von der Proxmox-API erhalten. Antwort war: $RESPONSE" >&2
+  exit 1
 fi
 
-IS_OVER_THRESHOLD=$(LC_NUMERIC=C awk "BEGIN { if ($PREFERRED_PCT >= $THRESHOLD) print 1; else print 0 }")
+DEFAULT_NODE=$(echo "$NODES_JSON" | jq -r '.[0].name')
 
-if [ "$IS_OVER_THRESHOLD" = "1" ]; then
-  DEFAULT_NODE=$FAILOVER_NODE
-else
-  DEFAULT_NODE=$PREFERRED_NODE
-fi
-
-RESULT="${RESULT}\"default_node\":\"${DEFAULT_NODE}\"}"
-echo "$RESULT"
+jq -n --arg nodes "$NODES_JSON" --arg default_node "$DEFAULT_NODE" \
+  '{nodes_json: $nodes, default_node: $default_node}'

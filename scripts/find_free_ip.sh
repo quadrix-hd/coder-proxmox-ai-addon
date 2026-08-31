@@ -1,16 +1,42 @@
 #!/bin/bash
-set -e
+set -euo pipefail
+
+command -v jq >/dev/null 2>&1 || {
+  echo "jq ist nicht installiert (siehe README, Abschnitt Prerequisites)" >&2
+  exit 1
+}
+
 INPUT=$(cat)
-SUBNET=$(echo "$INPUT" | sed -n 's/.*"subnet":"\([^"]*\)".*/\1/p')
-START=$(echo "$INPUT" | sed -n 's/.*"range_start":"\([^"]*\)".*/\1/p')
-END=$(echo "$INPUT" | sed -n 's/.*"range_end":"\([^"]*\)".*/\1/p')
+SUBNET=$(echo "$INPUT" | jq -r '.subnet')
+START=$(echo "$INPUT" | jq -r '.range_start')
+END=$(echo "$INPUT" | jq -r '.range_end')
+API_URL=$(echo "$INPUT" | jq -r '.api_url')
+TOKEN_ID=$(echo "$INPUT" | jq -r '.token_id')
+TOKEN_SECRET=$(echo "$INPUT" | jq -r '.token_secret')
+AUTH_HEADER="Authorization: PVEAPIToken=${TOKEN_ID}=${TOKEN_SECRET}"
+SUBNET_RE="${SUBNET//./\\.}"
+
+# Statt Ping-Sweep: die tatsaechlich in Proxmox konfigurierten IPs aller
+# VMs/LXCs im Cluster auslesen. Erkennt auch gestoppte Container (die auf
+# Ping nicht antworten wuerden, ihre IP aber weiterhin "besitzen").
+RESOURCES=$(curl -sk "${API_URL}/cluster/resources?type=vm" -H "$AUTH_HEADER")
+
+USED_IPS=""
+while IFS=$'\t' read -r NODE VMID TYPE; do
+  [ -z "$NODE" ] && continue
+  CONFIG=$(curl -sk "${API_URL}/nodes/${NODE}/${TYPE}/${VMID}/config" -H "$AUTH_HEADER" || true)
+  FOUND=$(echo "$CONFIG" | grep -oE "ip=${SUBNET_RE}\.[0-9]+" | cut -d= -f2 || true)
+  USED_IPS="${USED_IPS}
+${FOUND}"
+done < <(echo "$RESOURCES" | jq -r '.data[] | select(.type=="lxc" or .type=="qemu") | "\(.node)\t\(.vmid)\t\(.type)"')
 
 for i in $(seq "$START" "$END"); do
   IP="${SUBNET}.${i}"
-  if ! ping -c 1 -W 1 "$IP" >/dev/null 2>&1; then
-    echo "{\"ip\":\"$IP\"}"
+  if ! echo "$USED_IPS" | grep -qx "$IP"; then
+    jq -n --arg ip "$IP" '{ip: $ip}'
     exit 0
   fi
 done
-echo "Keine freie IP gefunden" >&2
+
+echo "Keine freie IP im Bereich ${SUBNET}.${START}-${END} gefunden (laut Proxmox-Konfigurationen)" >&2
 exit 1
