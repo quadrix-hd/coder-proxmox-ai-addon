@@ -16,7 +16,7 @@ A Coder template that automatically spins up a Proxmox LXC workspace with Claude
 - A running **Coder server** (Docker, see the [official Coder docs](https://coder.com/docs))
 - **Proxmox VE** (single node or cluster)
 - A **Claude Pro or Max subscription** (for the OAuth token)
-- `jq` installed on the Coder host (used by `scripts/get_cluster_load.sh` and `scripts/find_free_ip.sh` to talk to the Proxmox API)
+- `jq` installed in whatever environment actually runs the Terraform provisioning for `coder templates push` — for a standard Docker Compose deployment (the `coder` service from the [official docs](https://coder.com/docs)), that's **inside the `coder` container itself**, not the Docker host. The built-in provisioner runs there, so that's where `scripts/get_cluster_load.sh` and `scripts/find_free_ip.sh` execute. See "5.4 Push the template" for how to get `jq` into that container without rebuilding the image.
 - Basic familiarity with Terraform/Proxmox
 
 ---
@@ -188,23 +188,41 @@ coder login https://your-coder-url.com
 
 ### 5.4 Push the template
 
-Put your secrets in a gitignored `secrets.tfvars` file (`*.tfvars` is already excluded via `.gitignore`) instead of passing them inline — inline `--variable` values land in your shell history:
+Put your secrets in a **`terraform.tfvars`** file in the template directory (exactly that name — it's already excluded via `.gitignore`'s `*.tfvars` pattern) instead of passing them inline — inline `--variable` values land in your shell history. Terraform auto-loads this file, no extra flag needed. Don't use `coder templates push`'s own `--variables-file` flag for this: in practice it does **not** reliably accept a plain HCL tfvars file (it goes through a separate, stricter parser used for the "workspace tags" feature and tends to error out) — `terraform.tfvars` auto-loading is the mechanism that actually works.
 
 ```hcl
-# secrets.tfvars — never commit this file
+# terraform.tfvars — never commit this file
 pm_api_token_id         = "root@pam!terraform"
 pm_api_token_secret     = "YOUR-PROXMOX-TOKEN-SECRET"
 claude_code_oauth_token = "YOUR-CLAUDE-OAUTH-TOKEN"
 lxc_subnet              = "10.0.75"
 lxc_gateway             = "10.0.75.1"
-lxc_vlan_tag            = 75
+lxc_vlan_tag            = "75"      # quoted, see note below
+pm_tls_insecure         = "false"   # quoted, see note below
 ```
+
+> **Non-string variables must still be quoted here.** `lxc_vlan_tag` is declared as `number` and `pm_tls_insecure` as `bool` in `main.tf`, but Coder's own tfvars auto-discovery (separate from Terraform's normal HCL evaluation, used to populate the template variables list) fails with `unsupported value type: cty.Bool` / `cty.Number` on bare `true`/`75` literals. Quoting them as strings (`"true"`, `"75"`) works — Terraform still converts them to the declared type when it actually runs.
 
 ```bash
-coder templates push lxc-claude-task -d . --variables-file secrets.tfvars
+coder templates push lxc-claude-task -d .
 ```
 
-> **Important:** All variables must be set explicitly on **every** push — otherwise Coder silently keeps reusing the last value, even if the default in `main.tf` has changed. Keep `secrets.tfvars` up to date and pass it every time.
+> **Important:** All variables must be set explicitly on **every** push — otherwise Coder silently keeps reusing the last value, even if the default in `main.tf` has changed. Keep `terraform.tfvars` up to date.
+
+**If `jq` is missing where the provisioner runs** (see Prerequisites) — for a Docker Compose Coder deployment, that's the `coder` container — you'll get `Error Message: jq ist nicht installiert` during `terraform plan`, even if `jq` is installed on the Docker host. Fastest fix, no image rebuild needed: mount a **statically linked** `jq` binary into the container (a dynamically-linked one from the host's package manager won't run — it's missing its shared libraries inside the container and fails with `exec: no such file or directory`):
+
+```bash
+# On the Docker host:
+curl -L -o /opt/jq-static https://github.com/jqlang/jq/releases/latest/download/jq-linux-amd64
+chmod +x /opt/jq-static
+file /opt/jq-static   # must say "statically linked", not "dynamically linked"
+```
+
+Then add to the `coder` service's `volumes:` in your `docker-compose.yaml`:
+```yaml
+      - /opt/jq-static:/usr/bin/jq:ro
+```
+`docker compose up -d --force-recreate coder`, then verify with `docker exec <coder-container-name> jq --version`. Since this is a bind mount from a file on the Docker host (not something baked into the running container), it survives container recreation/restarts without any further action.
 
 ---
 
@@ -249,14 +267,17 @@ The built-in IPAM plugin (id `pve`) is available by default, no extra plugin set
 
 ### Enable it in the template
 
-```bash
-coder templates push lxc-claude-task -d . --variables-file secrets.tfvars \
-  --variable use_sdn_ipam=true \
-  --variable sdn_zone='ws' \
-  --variable sdn_vnet='wsnet'
+Add these three lines to your `terraform.tfvars` (see "5.4 Push the template" — they're not secret, just easier to keep alongside the rest) and push as usual:
+
+```hcl
+use_sdn_ipam = "true"   # quoted - see the note on non-string variables in 5.4
+sdn_zone     = "ws"
+sdn_vnet     = "wsnet"
 ```
 
-(Or add `use_sdn_ipam`, `sdn_zone`, `sdn_vnet` to your `secrets.tfvars` — they're not secret, just easier to keep alongside the rest.)
+```bash
+coder templates push lxc-claude-task -d .
+```
 
 **Test this on a throwaway workspace first.** This changes how the container's network interface is configured (a fixed `hwaddr` is now set, matching the MAC registered in IPAM) and adds a destroy-time cleanup step (`scripts/release_sdn_ip.sh`) that releases the IPAM reservation when a workspace is deleted. If that cleanup ever fails (e.g. Proxmox unreachable at delete time), it only logs a warning — it won't block the delete — but you may need to remove the stale entry manually under **Datacenter → SDN → IPAM**.
 
@@ -306,9 +327,10 @@ The Coder agent token and the Claude OAuth token are written once to `/etc/coder
 | Claude asks to log in | OAuth token missing/wrong | Check `/etc/coder-agent.env` inside the LXC (`cat /etc/coder-agent.env`) |
 | "Invalid host header" | `AGENTAPI_ALLOWED_HOSTS` missing | Set in the watchdog script, verify it |
 | Demo button greyed out | `subdomain = true` without wildcard DNS configured | Set to `subdomain = false` |
+| Demo button gives "502 Bad Gateway / connection was refused" on port 8080 | The site's Docker container is running on a different (often random) port, not 8080 — check with `docker ps` inside the workspace | Recreate it with the port pinned: `docker stop <name> && docker rm <name> && docker run -d --name <name> -p 8080:80 <image>`. Going forward, always spell out "fixed port mapping -p 8080:80" in the prompt (see "Important for the demo button") |
 | "vm not found" during creation | Known bug in the provider's `clone` attribute | Use `ostemplate` instead of `clone` |
 | Claude Code fails to install / `ECONNREFUSED downloads.claude.ai` | Brief network hiccup, often when creating workspaces in parallel | Reinstall manually: `curl -fsSL https://claude.ai/install.sh -o /tmp/i.sh && bash /tmp/i.sh`, then trigger the watchdog |
-| `scripts/*.sh` fail with "jq ist nicht installiert" | `jq` missing on the Coder host | `apt-get install -y jq` (or your distro's equivalent) on the host running `terraform`/`coder templates push` |
+| `scripts/*.sh` fail with "jq ist nicht installiert" | `jq` missing where the provisioner actually runs (the `coder` container itself in a Docker Compose setup — installing on the Docker host doesn't help) | See "5.4 Push the template" for the static-binary bind-mount fix |
 | `terraform plan`/`push` fails with a TLS error against Proxmox | `pm_tls_insecure` is now `false` by default | Import the Proxmox certificate (see "1.3 Trust the Proxmox certificate"), or explicitly pass `pm_tls_insecure=true` if you accept the risk |
 | `allocate_sdn_ip.sh` fails with "sdn_zone/sdn_vnet sind nicht gesetzt" | `use_sdn_ipam=true` without `sdn_zone`/`sdn_vnet` | Pass both variables (see "Optional: SDN + IPAM") |
 | `allocate_sdn_ip.sh` fails with a 5xx that isn't "IP already exist" | Zone/VNet/Subnet not set up correctly, or the token lacks `SDN.Allocate` permission | Check **Datacenter → SDN** is applied, and that the API token's role includes `SDN.Allocate` on `/sdn/zones/<zone>/<vnet>` |
@@ -327,4 +349,4 @@ The Coder agent token and the Claude OAuth token are written once to `/etc/coder
 
 ## License
 
-Use at your own risk. Not an official Coder or Anthropic product.
+[MIT](LICENSE). Use at your own risk. Not an official Coder or Anthropic product.
