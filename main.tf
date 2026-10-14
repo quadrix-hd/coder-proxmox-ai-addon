@@ -93,6 +93,58 @@ variable "sdn_vnet" {
 }
 
 # ---------------------------------------------------------
+# "Go live" (optional) - siehe README, Abschnitt "Go live"
+# ---------------------------------------------------------
+
+variable "golive_enabled" {
+  type        = bool
+  description = "Baut den 'Go live'-Button samt Vorbereitung (Terraform-CLI, go-live/-Stack, Registry-Login) in jeden Dev-Workspace ein. Default false: nichts davon wird angefasst, bis explizit aktiviert."
+  default     = false
+}
+
+variable "golive_ssh_public_key" {
+  type        = string
+  description = "Oeffentlicher Teil eines dedizierten SSH-Keypairs NUR fuer Go-live-Provisionierung (nicht derselbe Key wie fuer normale Dev-Workspaces). Nur relevant wenn golive_enabled=true."
+  default     = ""
+}
+
+variable "golive_ssh_private_key" {
+  type        = string
+  sensitive   = true
+  description = "Privater Teil desselben Keypairs. Nur relevant wenn golive_enabled=true."
+  default     = ""
+}
+
+variable "golive_registry_url" {
+  type        = string
+  description = "Host:Port der privaten Docker-Registry fuer Go-live-Images, siehe registry/README.md. Nur relevant wenn golive_enabled=true."
+  default     = ""
+}
+
+variable "golive_registry_user" {
+  type    = string
+  default = ""
+}
+
+variable "golive_registry_password" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+
+variable "golive_newt_endpoint" {
+  type        = string
+  description = "URL des Pangolin-Servers (derselbe fuer alle Kunden), z.B. https://pangolin.example.com. Nur relevant wenn golive_enabled=true."
+  default     = ""
+}
+
+variable "golive_repo" {
+  type        = string
+  description = "owner/repo, aus dem der go-live/-Stack bei jedem Workspace-Start frisch geklont wird (dieses Repo selbst, standardmaessig)."
+  default     = "quadrix-hd/coder-proxmox-ai-addon"
+}
+
+# ---------------------------------------------------------
 # Proxmox Provider
 # ---------------------------------------------------------
 
@@ -344,6 +396,29 @@ locals {
   workspace_mac = var.use_sdn_ipam ? data.external.free_ip_sdn[0].result.mac : null
 }
 
+# Fuer den "Go live"-Pfad (siehe README): Werte, die der go-live/-Stack
+# ebenfalls braucht, als fertige terraform.tfvars-Datei fuer dort. jsonencode
+# sorgt fuer korrektes Escaping unabhaengig vom Inhalt (Zeilenumbrueche im
+# SSH-Private-Key eingeschlossen) - kein verschachteltes Heredoc-Gefrickel.
+locals {
+  golive_common_tfvars = <<-EOT
+    pm_api_url           = ${jsonencode(var.pm_api_url)}
+    pm_api_token_id      = ${jsonencode(var.pm_api_token_id)}
+    pm_api_token_secret  = ${jsonencode(var.pm_api_token_secret)}
+    pm_tls_insecure      = ${jsonencode(var.pm_tls_insecure)}
+    target_node          = ${jsonencode(data.coder_parameter.target_node.value)}
+    lxc_subnet           = ${jsonencode(var.lxc_subnet)}
+    lxc_gateway          = ${jsonencode(var.lxc_gateway)}
+    lxc_vlan_tag         = ${jsonencode(var.lxc_vlan_tag)}
+    ssh_public_key       = ${jsonencode(var.golive_ssh_public_key)}
+    ssh_private_key      = ${jsonencode(var.golive_ssh_private_key)}
+    registry_url         = ${jsonencode(var.golive_registry_url)}
+    registry_user        = ${jsonencode(var.golive_registry_user)}
+    registry_password    = ${jsonencode(var.golive_registry_password)}
+    newt_endpoint        = ${jsonencode(var.golive_newt_endpoint)}
+  EOT
+}
+
 # ---------------------------------------------------------
 # Coder Agent (läuft im LXC)
 # ---------------------------------------------------------
@@ -400,6 +475,40 @@ fest auf http://localhost:8080 verdrahtet - ohne genau dieses Port-Mapping zeigt
 er einen 502-Fehler.
 CLAUDEMD_EOF
     fi
+
+%{if var.golive_enabled~}
+    # "Go live": Terraform-CLI, go-live/-Stack aus dem Repo, dedizierter
+    # SSH-Key und Registry-Login vorbereiten, damit der Button weiter unten
+    # (coder_app.go_live) direkt loslegen kann. Siehe README, Abschnitt
+    # "Go live", fuer den gesamten Ablauf.
+    if ! command -v terraform >/dev/null 2>&1; then
+      curl -fsSL -o /tmp/tf.zip https://releases.hashicorp.com/terraform/1.9.8/terraform_1.9.8_linux_amd64.zip
+      unzip -o /tmp/tf.zip -d /usr/local/bin >/dev/null
+      rm -f /tmp/tf.zip
+    fi
+
+    rm -rf /opt/golive-src
+    git clone --depth 1 "https://github.com/${var.golive_repo}.git" /opt/golive-src 2>/dev/null || true
+    # go-live/main.tf erwartet scripts/ als Geschwisterordner (../scripts/
+    # find_free_ip.sh) - der komplette geklonte Baum bleibt deshalb intakt,
+    # statt Teile in separate Verzeichnisse zu kopieren.
+
+    mkdir -p /root/.ssh
+    echo '${base64encode(var.golive_ssh_private_key)}' | base64 -d > /root/.ssh/golive_id_rsa
+    chmod 600 /root/.ssh/golive_id_rsa
+    echo '${base64encode(var.golive_ssh_public_key)}' | base64 -d > /root/.ssh/golive_id_rsa.pub
+
+    echo '${base64encode(local.golive_common_tfvars)}' | base64 -d > /opt/golive-src/go-live/common.auto.tfvars
+    chmod 600 /opt/golive-src/go-live/common.auto.tfvars
+
+    mkdir -p /etc/docker
+    echo '{"insecure-registries":["${var.golive_registry_url}"]}' > /etc/docker/daemon.json
+    systemctl restart docker || true
+    echo '${var.golive_registry_password}' | docker login ${var.golive_registry_url} -u '${var.golive_registry_user}' --password-stdin || true
+
+    echo '${base64encode(templatefile("${path.module}/scripts/go-live.sh.tftpl", { registry_url = var.golive_registry_url }))}' | base64 -d > /usr/local/bin/go-live.sh
+    chmod +x /usr/local/bin/go-live.sh
+%{endif~}
   EOT
 }
 
@@ -541,6 +650,19 @@ resource "coder_app" "reboot" {
   display_name = "Server neu starten"
   icon         = "/emojis/1f504.png"
   command      = "sudo reboot"
+}
+
+# Interaktiver Terminal-Button, der /usr/local/bin/go-live.sh ausfuehrt
+# (geschrieben vom startup_script oben, nur wenn golive_enabled=true).
+# Fragt Site-Name/Domain/Newt-Credentials ab und stoesst den eigenstaendigen
+# go-live/-Terraform-Stack an. Siehe README, Abschnitt "Go live".
+resource "coder_app" "go_live" {
+  count        = var.golive_enabled ? 1 : 0
+  agent_id     = coder_agent.main.id
+  slug         = "go-live"
+  display_name = "Go live"
+  icon         = "/emojis/1f680.png"
+  command      = "bash /usr/local/bin/go-live.sh"
 }
 
 resource "coder_app" "demo_site" {

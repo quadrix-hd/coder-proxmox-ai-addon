@@ -1,0 +1,48 @@
+#!/bin/bash
+set -e
+
+GOLIVE_DIR=/opt/golive-src/go-live
+REGISTRY_URL='${registry_url}'
+
+echo "=== Go live ==="
+echo
+
+CONTAINER=$(docker ps --filter "publish=8080" --format '{{.Names}}' | head -n1)
+if [ -z "$CONTAINER" ]; then
+  echo "Kein laufender Container auf Port 8080 gefunden. Erst die Seite deployen (fixed port mapping -p 8080:80), dann nochmal versuchen." >&2
+  exit 1
+fi
+echo "Gefundener Container: $CONTAINER"
+IMAGE=$(docker inspect --format '{{.Config.Image}}' "$CONTAINER")
+echo "Image: $IMAGE"
+echo
+
+read -rp "Kurzer, eindeutiger Site-Name (z.B. kundenname-website): " SITE_NAME
+read -rp "Kundendomain (z.B. kunde.example.com): " CUSTOMER_DOMAIN
+read -rp "Newt-ID (aus Pangolin beim Anlegen der Site kopiert): " NEWT_ID
+read -rsp "Newt-Secret: " NEWT_SECRET
+echo
+echo
+
+if [ -z "$SITE_NAME" ]; then
+  echo "Site-Name darf nicht leer sein, Abbruch." >&2
+  exit 1
+fi
+
+TAG="$SITE_NAME:$(date +%Y%m%d%H%M%S)"
+REGISTRY_IMAGE="$REGISTRY_URL/$TAG"
+
+echo "Pushe $IMAGE als $REGISTRY_IMAGE ..."
+docker tag "$IMAGE" "$REGISTRY_IMAGE"
+docker push "$REGISTRY_IMAGE"
+
+echo
+echo "Starte Terraform-Apply in $GOLIVE_DIR ..."
+cd "$GOLIVE_DIR"
+terraform init -input=false
+terraform apply -auto-approve \
+  -var "site_name=$SITE_NAME" \
+  -var "customer_domain=$CUSTOMER_DOMAIN" \
+  -var "docker_image=$TAG" \
+  -var "newt_id=$NEWT_ID" \
+  -var "newt_secret=$NEWT_SECRET"

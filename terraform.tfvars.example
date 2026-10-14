@@ -33,3 +33,16 @@ pm_tls_insecure = "false"    # String-Literal; "true" nur falls kein Proxmox-Zer
 # use_sdn_ipam = "true"
 # sdn_zone     = "ws"
 # sdn_vnet     = "wsnet"
+
+# Optional: "Go live" - Button zum Promoten einer fertigen Seite in eine
+# dauerhafte, von Coder unabhaengige Produktions-LXC. Erfordert eine
+# private Registry (registry/README.md) und einen dedizierten SSH-Key
+# (NICHT derselbe wie oben fuer normale Dev-Workspaces). Siehe README
+# ("Optional: Go live") fuer den vollstaendigen Ablauf.
+# golive_enabled           = "true"
+# golive_ssh_public_key    = "ssh-rsa AAAA..."
+# golive_ssh_private_key   = "-----BEGIN OPENSSH PRIVATE KEY-----\n...\n-----END OPENSSH PRIVATE KEY-----"
+# golive_registry_url      = "10.0.75.1:5000"
+# golive_registry_user     = "golive"
+# golive_registry_password = "..."
+# golive_newt_endpoint     = "https://pangolin.example.com"
