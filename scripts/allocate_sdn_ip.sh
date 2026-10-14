@@ -11,6 +11,9 @@ set -euo pipefail
 # find_free_ip.sh). Setzt eine vorbereitete SDN Zone/VNet/Subnet mit dem
 # eingebauten "pve"-IPAM voraus, siehe README ("SDN + IPAM").
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/lib_proxmox.sh"
+
 command -v jq >/dev/null 2>&1 || {
   echo "jq ist nicht installiert (siehe README, Abschnitt Prerequisites)" >&2
   exit 1
@@ -50,7 +53,7 @@ for i in $(seq "$START" "$END"); do
   IP="${SUBNET}.${i}"
   MAC=$(random_mac)
 
-  HTTP_RESPONSE=$(curl "${CURL_OPTS[@]}" -w '\n%{http_code}' -X POST \
+  HTTP_RESPONSE=$(curl_retry "${CURL_OPTS[@]}" -w '\n%{http_code}' -X POST \
     "${API_URL}/nodes/${NODE}/network/sdn/ips" \
     -H "$AUTH_HEADER" \
     --data-urlencode "zone=${ZONE}" \

@@ -1,6 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/lib_proxmox.sh"
+
 command -v jq >/dev/null 2>&1 || {
   echo "jq ist nicht installiert (siehe README, Abschnitt Prerequisites)" >&2
   exit 1
@@ -15,7 +18,7 @@ TLS_INSECURE=$(echo "$INPUT" | jq -r '.tls_insecure // "false"')
 CURL_OPTS=(-s)
 [ "$TLS_INSECURE" = "true" ] && CURL_OPTS+=(-k)
 
-RESPONSE=$(curl "${CURL_OPTS[@]}" "${API_URL}/nodes" \
+RESPONSE=$(curl_retry "${CURL_OPTS[@]}" "${API_URL}/nodes" \
   -H "Authorization: PVEAPIToken=${TOKEN_ID}=${TOKEN_SECRET}")
 
 # Proxmox liefert {"data":[{"node":"pve","mem":123,"maxmem":456,...}, ...]}.

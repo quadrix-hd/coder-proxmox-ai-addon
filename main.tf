@@ -381,6 +381,25 @@ resource "coder_agent" "main" {
       done
       rm -rf /tmp/skills-repo
     fi
+
+    # Port-8080-Konvention fuer den Demo-Button als globale Claude-Code-
+    # Anweisung hinterlegen, statt sich darauf zu verlassen, dass jeder
+    # Prompt es explizit erwaehnt (der Button ist fest auf localhost:8080
+    # verdrahtet - ohne diesen Port gibt's einen 502). Guard gegen
+    # doppeltes Anhaengen, falls das Skript durch "Restart=always" der
+    # coder-agent.service erneut laeuft.
+    mkdir -p /root/.claude
+    if ! grep -q "Deployment-Konvention fuer diesen Workspace" /root/.claude/CLAUDE.md 2>/dev/null; then
+      cat >> /root/.claude/CLAUDE.md <<'CLAUDEMD_EOF'
+
+## Deployment-Konvention fuer diesen Workspace
+Beim Deployen einer Web-App oder Demo-Seite mit Docker in diesem Workspace
+IMMER auf dem Host-Port 8080 veroeffentlichen (z.B. `docker run -p 8080:80 ...`),
+unabhaengig davon was im Auftrag steht. Der "Demo-Webseite"-Button in Coder ist
+fest auf http://localhost:8080 verdrahtet - ohne genau dieses Port-Mapping zeigt
+er einen 502-Fehler.
+CLAUDEMD_EOF
+    fi
   EOT
 }
 
@@ -397,6 +416,11 @@ resource "proxmox_lxc" "workspace" {
   swap         = local.chosen.swap
   unprivileged = true
   start        = data.coder_workspace.me.start_count == 1
+  # Ohne dieses Flag ueberlebt ein laufender Workspace keinen Proxmox-
+  # Host-Neustart: Proxmox startet beim Hochfahren nur Container mit
+  # onboot=1 automatisch wieder, alles andere bleibt gestoppt stehen,
+  # bis jemand es manuell (oder ueber Coder) wieder startet.
+  onboot = true
 
   lifecycle {
     ignore_changes = [network, ostemplate]

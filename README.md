@@ -174,7 +174,6 @@ In `main.tf`, adjust these defaults to your environment:
 | Variable | Where | What |
 |---|---|---|
 | `pm_api_url` | `variable "pm_api_url"` | Your Proxmox API URL, e.g. `https://192.168.1.10:8006/api2/json` |
-| `target_node` | `variable "target_node"` | Your Proxmox node name |
 | `lxc_subnet`, `lxc_gateway`, `lxc_vlan_tag` | respective variables | Your network for the workspaces |
 
 If you have a Proxmox **cluster** and want to use node selection: the node dropdown is generated automatically from whatever `/nodes` returns — no per-node script edits needed. Only the `coder_workspace_preset` blocks in `main.tf` still hardcode `"pve"`/`"pve4"` as convenience shortcuts; update those (or add/remove presets) to match your real node names if you want preset-level node pinning.
@@ -189,6 +188,8 @@ coder login https://your-coder-url.com
 ### 5.4 Push the template
 
 Put your secrets in a **`terraform.tfvars`** file in the template directory (exactly that name — it's already excluded via `.gitignore`'s `*.tfvars` pattern) instead of passing them inline — inline `--variable` values land in your shell history. Terraform auto-loads this file, no extra flag needed. Don't use `coder templates push`'s own `--variables-file` flag for this: in practice it does **not** reliably accept a plain HCL tfvars file (it goes through a separate, stricter parser used for the "workspace tags" feature and tends to error out) — `terraform.tfvars` auto-loading is the mechanism that actually works.
+
+A commented template with every variable is in [`terraform.tfvars.example`](terraform.tfvars.example) — copy it (`cp terraform.tfvars.example terraform.tfvars`) and fill in your real values instead of retyping everything from scratch.
 
 ```hcl
 # terraform.tfvars — never commit this file
@@ -246,6 +247,13 @@ The demo button expects the website on **port 8080** (`localhost:8080` inside th
 - **Delete permanently**: delete via the Coder UI (not just stop), otherwise the Proxmox container remains
 - **Do not** check "Orphan"/"Skip resource cleanup" if that option appears when deleting
 
+### Preventing forgotten workspaces from piling up
+
+Nothing in this template stops a workspace automatically — a forgotten one just sits there running, using RAM/CPU on your Proxmox node(s) indefinitely. This matters more once more than one person can create workspaces (e.g. multiple OIDC users/groups): an inactivity-based TTL means stale workspaces free themselves up instead of quietly accumulating. Coder has built-in support for this independent of this template's Terraform code:
+
+- **Per-workspace**: workspace owners can set a "Scheduled shutdown" from the workspace's own settings in the Coder UI.
+- **Template-wide default**: check **Templates → `lxc-claude-task` → Settings → Schedule** in the Coder dashboard (exact wording depends on your Coder version), or `coder templates push --help` for a default-TTL-style flag your installed version supports. Setting a sane default there (e.g. auto-stop after 8h idle) means someone forgetting to stop a workspace doesn't silently eat cluster resources forever.
+
 ---
 
 ## Optional: SDN + IPAM (atomic IP allocation)
@@ -289,7 +297,9 @@ coder templates push lxc-claude-task -d .
 .
 ├── main.tf                       Main template
 ├── watchdog.sh.tftpl              Keeps Claude Code/agentapi running reliably
+├── terraform.tfvars.example       Commented template for your terraform.tfvars
 └── scripts/
+    ├── lib_proxmox.sh             Shared curl-with-retry helper, sourced by the scripts below
     ├── find_free_ip.sh            Default IP assignment, backed by the Proxmox API (not ping)
     ├── get_cluster_load.sh        Live load display for multi-node selection, any cluster size
     ├── allocate_sdn_ip.sh         Optional: atomic IP allocation via Proxmox SDN + IPAM
@@ -316,6 +326,15 @@ The Tasks flow (AI prompt text field) doesn't display raw `coder_parameter` valu
 **Secrets live in one file on the workspace, not scattered across several**
 The Coder agent token and the Claude OAuth token are written once to `/etc/coder-agent.env` (`chmod 600`, root-only) inside the LXC, and both the `coder-agent` systemd service (via `EnvironmentFile=`) and the watchdog script source that same file — instead of each having their own copy of the secrets on disk.
 
+**`onboot = true` on the LXC**
+Without it, a Proxmox **host** reboot leaves every workspace container stopped — Proxmox only auto-starts containers flagged `onboot` when the host comes back up, independent of whatever Coder's database thinks the workspace's last state was. This is unrelated to Coder's own stop/start handling (`start = data.coder_workspace.me.start_count == 1`), which only controls what happens on a Terraform apply, not on a bare-metal reboot.
+
+**`curl_retry` (`scripts/lib_proxmox.sh`) instead of a bare `curl`**
+Terraform re-evaluates `data "external"` sources on *every* apply — including a plain start/stop of a workspace that already exists, not just on creation. That means `find_free_ip.sh`/`get_cluster_load.sh`/`allocate_sdn_ip.sh` hit the Proxmox API on every single workspace action. A brief connection hiccup (e.g. the few seconds right after a Proxmox host or service restart, while the API is still coming up) would otherwise fail the whole apply and block starting *any* workspace, even ones that need no new IP. `curl_retry` retries with exponential backoff, but only on genuine connection-level failures (DNS/connect/timeout/TLS/empty-reply) — a real HTTP error (wrong credentials, permissions) still fails immediately rather than retrying a request that would fail the same way five times in a row.
+
+**Port-8080 convention enforced via a global `CLAUDE.md`, not just prompt wording**
+The demo button is hardcoded to `http://localhost:8080`. Relying on every prompt explicitly saying "fixed port mapping -p 8080:80" is fragile — forget it once and you get a 502. The agent's startup script now drops that instruction into `/root/.claude/CLAUDE.md`, which Claude Code reads as standing context regardless of what a given prompt says.
+
 ---
 
 ## Troubleshooting
@@ -323,6 +342,8 @@ The Coder agent token and the Claude OAuth token are written once to `/etc/coder
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | SSH timeout during creation | Network/switch delay on first boot | Wait, optionally increase the timeout in the template |
+| Workspaces don't come back after a Proxmox **host** reboot | Containers need `onboot=1` to auto-start when Proxmox itself boots — already set in this template (`onboot = true`), but if you're on an older pushed template version this fix predates, push again | `coder templates push lxc-claude-task -d .` to pick up the current template, then re-create or manually `pct start` any workspace that was created under the old version |
+| Starting *any* existing workspace fails right after restarting Proxmox/its services | The Proxmox API can take a few seconds to come back up fully; `data "external"` sources (IP/node lookups) re-run on every apply and would fail if the API isn't ready yet | Should self-resolve now (`curl_retry` retries connection failures with backoff) — if it still fails after that, the outage outlasted the retry window; just try the start again a bit later |
 | `agentapi` 502 in web UI | Watchdog hasn't kicked in yet | Wait 1–2 min, cron runs every minute |
 | Claude asks to log in | OAuth token missing/wrong | Check `/etc/coder-agent.env` inside the LXC (`cat /etc/coder-agent.env`) |
 | "Invalid host header" | `AGENTAPI_ALLOWED_HOSTS` missing | Set in the watchdog script, verify it |
@@ -344,6 +365,8 @@ The Coder agent token and the Claude OAuth token are written once to `/etc/coder
 - **No live failover for running workspaces**: node selection only applies at creation time. A running workspace is never automatically migrated to another node, even if its node becomes heavily loaded
 - **IP allocation is atomic only if you opt into SDN+IPAM**: by default, `find_free_ip.sh` reads the actually-configured IPs from every VM/LXC via the Proxmox API instead of pinging, which is far more reliable than ping, but two `terraform apply` runs racing at the exact same moment could in theory still pick the same "free" IP. Setting `use_sdn_ipam = true` (see "Optional: SDN + IPAM" above) closes this gap using Proxmox's own IPAM locking — but it's opt-in, not the default, since it needs a one-time SDN setup on the Proxmox side first. Note: the `telmate/proxmox` provider pinned here can't read back a container's IP when `network.ip = "dhcp"` ([open upstream issue](https://github.com/Telmate/terraform-provider-proxmox/issues/1453)), which is why even the SDN path pre-allocates the IP via the IPAM API and assigns it statically, rather than letting the container DHCP it at boot.
 - **Planned, not yet built**: a "Go live" button that exports a finished workspace into a permanent, Coder-independent production container
+- **One shared, static SSH key for every workspace, forever**: `proxmox_lxc.workspace.ssh_public_keys` uses the same key (`~/.ssh/coder-ssh-key` on the Coder host) for every workspace it has ever created. If that key leaks, every existing *and future* workspace is reachable as root until someone manually rotates it everywhere. There's no per-workspace key, no expiry, no rotation story. Low risk for a single trusted operator; a real gap the moment more than one person can trigger workspace creation.
+- **`use_sdn_ipam=true` claims a fresh IP on every workspace start/stop, not just on creation**: Terraform re-evaluates `data "external"` sources on every apply, including a plain restart of an already-existing workspace. `allocate_sdn_ip.sh` has no way to know "this workspace already has an IP, don't claim a new one" — each restart burns one more IP in the configured range, orphaned in Proxmox's IPAM (the actual container keeps its original IP, since `network` is in `ignore_changes`, but the spurious claim still sits in **Datacenter → SDN → IPAM**). Over enough start/stop cycles, this can exhaust the configured range even though far fewer workspaces are actually running. Not a problem for the default (non-SDN) path, which only *reads* state and never claims anything. Until this is fixed, periodically check **Datacenter → SDN → IPAM** for stale entries if you have `use_sdn_ipam` on, or just don't enable it in a workspace mix with frequent restarts yet.
 
 ---
 

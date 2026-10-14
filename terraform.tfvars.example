@@ -1,0 +1,35 @@
+# Kopieren nach terraform.tfvars und mit echten Werten fuellen:
+#   cp terraform.tfvars.example terraform.tfvars
+#
+# terraform.tfvars ist bereits in .gitignore (*.tfvars) und wird nie
+# committet. Terraform laedt die Datei automatisch, keine --variable-
+# Flags oder --variables-file noetig (siehe README, Abschnitt 5.4).
+#
+# WICHTIG: lxc_vlan_tag (number) und pm_tls_insecure/use_sdn_ipam (bool)
+# muessen trotz ihres Terraform-Typs als String-Literale in Anfuehrungs-
+# zeichen geschrieben werden - Coders eigene tfvars-Auto-Discovery kommt
+# sonst mit cty.Bool/cty.Number nicht klar. Terraform wandelt sie beim
+# eigentlichen Apply korrekt in den deklarierten Typ um.
+
+pm_api_token_id         = "root@pam!terraform"
+pm_api_token_secret     = "DEIN-PROXMOX-API-TOKEN-SECRET"
+claude_code_oauth_token = "DEIN-CLAUDE-OAUTH-TOKEN"   # sk-ant-oat...
+
+lxc_subnet   = "10.0.75"
+lxc_gateway  = "10.0.75.1"
+lxc_vlan_tag = "75"          # String-Literal, siehe Hinweis oben
+
+pm_tls_insecure = "false"    # String-Literal; "true" nur falls kein Proxmox-Zertifikat importiert werden kann
+
+# Optional: privates Skills-Repo, das in jeden Workspace unter
+# /root/.claude/skills/ nachgeladen wird. Leer lassen zum Ueberspringen.
+# skills_repo_token = "ghp_..."
+# skills_repo_path  = "dein-user/dein-skills-repo"
+
+# Optional: atomare IP-Vergabe ueber Proxmox SDN + IPAM statt der
+# Default-API-Abfrage. Erfordert eine einmalige SDN-Einrichtung in
+# Proxmox, siehe README ("Optional: SDN + IPAM"). Erst aktivieren,
+# nachdem das Grund-Setup laeuft.
+# use_sdn_ipam = "true"
+# sdn_zone     = "ws"
+# sdn_vnet     = "wsnet"
