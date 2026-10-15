@@ -40,12 +40,15 @@ pm_tls_insecure = "false"    # String-Literal; "true" nur falls kein Proxmox-Zer
 # (NICHT derselbe wie oben fuer normale Dev-Workspaces). Siehe README
 # ("Optional: Go live") fuer den vollstaendigen Ablauf.
 #
-# Die beiden *_path-Variablen sind Dateipfade auf DIESEM Rechner (dort wo
-# "coder templates push" laeuft) - Terraform liest die Dateien direkt ein,
-# kein manuelles Reinkopieren/Escapen des Key-Inhalts noetig.
+# Die beiden *_path-Variablen sind Dateipfade aus Sicht des Terraform-Laufs
+# selbst - bei einem Docker-Compose-Setup also INNERHALB des coder-
+# Containers, nicht zwingend derselbe Pfad wie auf dem Docker-Host (siehe
+# README fuer den noetigen chown + Volume-Mount-Schritt, genau wie beim
+# bestehenden Dev-Workspace-SSH-Key). Terraform liest die Dateien direkt
+# ein, kein manuelles Reinkopieren/Escapen des Key-Inhalts noetig.
 # golive_enabled              = "true"
-# golive_ssh_public_key_path  = "/root/golive-ssh-key.pub"
-# golive_ssh_private_key_path = "/root/golive-ssh-key"
+# golive_ssh_public_key_path  = "/home/coder/.ssh/golive_id_rsa.pub"
+# golive_ssh_private_key_path = "/home/coder/.ssh/golive_id_rsa"
 # golive_registry_url      = "10.0.75.1:5000"
 # golive_registry_user     = "golive"
 # golive_registry_password = "..."

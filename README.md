@@ -306,15 +306,27 @@ This is a genuinely separate piece of infrastructure from the rest of this templ
 ### One-time setup
 
 1. Set up the registry (`registry/README.md`) and note its URL.
-2. Generate a **dedicated** SSH keypair for go-live provisioning — intentionally not the same key used for normal dev workspaces, to limit blast radius:
+2. Generate a **dedicated** SSH keypair for go-live provisioning — intentionally not the same key used for normal dev workspaces, to limit blast radius. Do this on the Docker host (same as section "2. SSH key for the Coder container"), **not** inside the `coder` container:
    ```bash
    ssh-keygen -t rsa -b 4096 -f ~/golive-ssh-key -N ""
    ```
-3. Add to your `terraform.tfvars`. The two `*_path` values are file paths on whatever machine runs `coder templates push` — Terraform reads them with `file()`, same as the main template already does for the regular workspace SSH key, so there's no copy-pasting or escaping the key content by hand:
+   `coder templates push` runs its Terraform provisioning *inside* the `coder` container, as the non-root `coder` user (check with `docker exec -it coder-coder-1 id`) — not as root, and not with access to anything under the container's own `/root`. So, exactly like the existing dev-workspace SSH key, this one needs to be `chown`'d and bind-mounted into the container rather than just referenced by a host path:
+   ```bash
+   chown 1000:1000 ~/golive-ssh-key ~/golive-ssh-key.pub   # adjust UID if `docker exec -it coder-coder-1 id` shows something else
+   chmod 600 ~/golive-ssh-key
+   chmod 644 ~/golive-ssh-key.pub
+   ```
+   Add to your `docker-compose.yaml` under the `coder` service's `volumes:` (alongside the existing `coder-ssh-key` mounts):
+   ```yaml
+       - ~/golive-ssh-key:/home/coder/.ssh/golive_id_rsa
+       - ~/golive-ssh-key.pub:/home/coder/.ssh/golive_id_rsa.pub
+   ```
+   Then `docker compose up -d --force-recreate coder`.
+3. Add to your `terraform.tfvars`, using the **in-container** paths from the mount above (not the host paths) — Terraform reads them with `file()`, same as the main template already does for the regular workspace SSH key, so there's no copy-pasting or escaping the key content by hand:
    ```hcl
    golive_enabled              = "true"
-   golive_ssh_public_key_path  = "/root/golive-ssh-key.pub"
-   golive_ssh_private_key_path = "/root/golive-ssh-key"
+   golive_ssh_public_key_path  = "/home/coder/.ssh/golive_id_rsa.pub"
+   golive_ssh_private_key_path = "/home/coder/.ssh/golive_id_rsa"
    golive_registry_url         = "10.0.75.1:5000"
    golive_registry_user        = "golive"
    golive_registry_password    = "..."
@@ -403,6 +415,7 @@ The demo button is hardcoded to `http://localhost:8080`. Relying on every prompt
 | `terraform plan`/`push` fails with a TLS error against Proxmox | `pm_tls_insecure` is now `false` by default | Import the Proxmox certificate (see "1.3 Trust the Proxmox certificate"), or explicitly pass `pm_tls_insecure=true` if you accept the risk |
 | `allocate_sdn_ip.sh` fails with "sdn_zone/sdn_vnet sind nicht gesetzt" | `use_sdn_ipam=true` without `sdn_zone`/`sdn_vnet` | Pass both variables (see "Optional: SDN + IPAM") |
 | `allocate_sdn_ip.sh` fails with a 5xx that isn't "IP already exist" | Zone/VNet/Subnet not set up correctly, or the token lacks `SDN.Allocate` permission | Check **Datacenter → SDN** is applied, and that the API token's role includes `SDN.Allocate` on `/sdn/zones/<zone>/<vnet>` |
+| `terraform plan` fails on `golive_ssh_*_key_path` with "permission denied" | The key file is only readable by root, but Terraform runs inside the `coder` container as a non-root user (`docker exec -it coder-coder-1 id` to check) | `chown` the key to that UID on the host and bind-mount it into the container (see "Optional: Go live" → step 2) — a host path alone isn't visible/readable inside the container |
 
 ---
 
