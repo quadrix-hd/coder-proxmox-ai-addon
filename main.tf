@@ -102,16 +102,15 @@ variable "golive_enabled" {
   default     = false
 }
 
-variable "golive_ssh_public_key" {
+variable "golive_ssh_public_key_path" {
   type        = string
-  description = "Oeffentlicher Teil eines dedizierten SSH-Keypairs NUR fuer Go-live-Provisionierung (nicht derselbe Key wie fuer normale Dev-Workspaces). Nur relevant wenn golive_enabled=true."
+  description = "Pfad (auf dem Rechner, der terraform/coder templates push ausfuehrt) zum oeffentlichen Teil eines dedizierten SSH-Keypairs NUR fuer Go-live-Provisionierung (nicht derselbe Key wie fuer normale Dev-Workspaces). Wird per file() eingelesen, genauso wie ssh_public_keys weiter unten fuer die normalen Dev-Workspaces. Nur relevant wenn golive_enabled=true."
   default     = ""
 }
 
-variable "golive_ssh_private_key" {
+variable "golive_ssh_private_key_path" {
   type        = string
-  sensitive   = true
-  description = "Privater Teil desselben Keypairs. Nur relevant wenn golive_enabled=true."
+  description = "Pfad zum privaten Teil desselben Keypairs. Nur relevant wenn golive_enabled=true."
   default     = ""
 }
 
@@ -410,8 +409,8 @@ locals {
     lxc_subnet           = ${jsonencode(var.lxc_subnet)}
     lxc_gateway          = ${jsonencode(var.lxc_gateway)}
     lxc_vlan_tag         = ${jsonencode(var.lxc_vlan_tag)}
-    ssh_public_key       = ${jsonencode(var.golive_ssh_public_key)}
-    ssh_private_key      = ${jsonencode(var.golive_ssh_private_key)}
+    ssh_public_key       = ${jsonencode(var.golive_ssh_public_key_path != "" ? file(var.golive_ssh_public_key_path) : "")}
+    ssh_private_key      = ${jsonencode(var.golive_ssh_private_key_path != "" ? file(var.golive_ssh_private_key_path) : "")}
     registry_url         = ${jsonencode(var.golive_registry_url)}
     registry_user        = ${jsonencode(var.golive_registry_user)}
     registry_password    = ${jsonencode(var.golive_registry_password)}
@@ -494,9 +493,9 @@ CLAUDEMD_EOF
     # statt Teile in separate Verzeichnisse zu kopieren.
 
     mkdir -p /root/.ssh
-    echo '${base64encode(var.golive_ssh_private_key)}' | base64 -d > /root/.ssh/golive_id_rsa
+    echo '${base64encode(file(var.golive_ssh_private_key_path))}' | base64 -d > /root/.ssh/golive_id_rsa
     chmod 600 /root/.ssh/golive_id_rsa
-    echo '${base64encode(var.golive_ssh_public_key)}' | base64 -d > /root/.ssh/golive_id_rsa.pub
+    echo '${base64encode(file(var.golive_ssh_public_key_path))}' | base64 -d > /root/.ssh/golive_id_rsa.pub
 
     echo '${base64encode(local.golive_common_tfvars)}' | base64 -d > /opt/golive-src/go-live/common.auto.tfvars
     chmod 600 /opt/golive-src/go-live/common.auto.tfvars

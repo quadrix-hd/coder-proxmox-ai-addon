@@ -310,15 +310,15 @@ This is a genuinely separate piece of infrastructure from the rest of this templ
    ```bash
    ssh-keygen -t rsa -b 4096 -f ~/golive-ssh-key -N ""
    ```
-3. Add to your `terraform.tfvars`:
+3. Add to your `terraform.tfvars`. The two `*_path` values are file paths on whatever machine runs `coder templates push` — Terraform reads them with `file()`, same as the main template already does for the regular workspace SSH key, so there's no copy-pasting or escaping the key content by hand:
    ```hcl
-   golive_enabled           = "true"
-   golive_ssh_public_key    = "ssh-rsa AAAA..."          # contents of ~/golive-ssh-key.pub
-   golive_ssh_private_key   = "-----BEGIN OPENSSH PRIVATE KEY-----\n...\n-----END OPENSSH PRIVATE KEY-----"
-   golive_registry_url      = "10.0.75.1:5000"
-   golive_registry_user     = "golive"
-   golive_registry_password = "..."
-   golive_newt_endpoint     = "https://pangolin.example.com"
+   golive_enabled              = "true"
+   golive_ssh_public_key_path  = "/root/golive-ssh-key.pub"
+   golive_ssh_private_key_path = "/root/golive-ssh-key"
+   golive_registry_url         = "10.0.75.1:5000"
+   golive_registry_user        = "golive"
+   golive_registry_password    = "..."
+   golive_newt_endpoint        = "https://pangolin.example.com"
    ```
 4. `coder templates push lxc-claude-task -d .` — every dev workspace created from here on gets the "Go live" button, `terraform`, and a fresh clone of this repo's `go-live/` stack baked in at startup.
 

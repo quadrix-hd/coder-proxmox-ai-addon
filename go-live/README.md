@@ -17,10 +17,12 @@ variables already filled in. You can also run it manually from here.
    ```bash
    ssh-keygen -t rsa -b 4096 -f ~/golive-ssh-key -N ""
    ```
-   The private key goes into every dev workspace (via `golive_ssh_private_key`
-   in the main template's `terraform.tfvars`) so the "Go live" button can
-   use it; it's intentionally not the same key used to provision dev
-   workspaces themselves, to keep the blast radius of a leak smaller.
+   The private key's path goes into every dev workspace (via
+   `golive_ssh_private_key_path` in the main template's `terraform.tfvars`
+   — Terraform reads the file directly, no need to paste/escape the key
+   content anywhere) so the "Go live" button can use it; it's intentionally
+   not the same key used to provision dev workspaces themselves, to keep
+   the blast radius of a leak smaller.
 
 ## One-time setup (per customer)
 
