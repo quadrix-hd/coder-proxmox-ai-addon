@@ -56,6 +56,10 @@ pm_tls_insecure = "false"    # String-Literal; "true" nur falls kein Proxmox-Zer
 # Setup (sichtbar im Startup-Log als "Klonen ... fehlgeschlagen"). Leer
 # lassen nur, wenn golive_repo auf ein oeffentliches Repo zeigt.
 # golive_repo_token = "ghp_..."
+#
+# Nur beim Testen eines noch nicht gemergten go-live-Feature-Branches noetig
+# (golive_repo_ref default ist "main"):
+# golive_repo_ref = "feature/go-live-production-deploy"
 # golive_registry_url      = "10.0.75.1:5000"
 # golive_registry_user     = "golive"
 # golive_registry_password = "..."

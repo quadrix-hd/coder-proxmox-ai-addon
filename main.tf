@@ -150,6 +150,12 @@ variable "golive_repo_token" {
   description = "GitHub-Token mit Lesezugriff auf golive_repo, falls dieses Repo privat ist (z.B. dieses Repo selbst, im Standardfall). Leer lassen, wenn golive_repo oeffentlich ist. Laeuft wie skills_repo_token ueber GIT_ASKPASS."
 }
 
+variable "golive_repo_ref" {
+  type        = string
+  default     = "main"
+  description = "Branch/Tag, von dem golive_repo geklont wird. Normalerweise main. Nur aendern, wenn der go-live/-Stack (noch) auf einem anderen Branch liegt als main, z.B. waehrend ein 'Go live'-Feature-Branch getestet wird, bevor er gemerged ist."
+}
+
 # ---------------------------------------------------------
 # Proxmox Provider
 # ---------------------------------------------------------
@@ -500,11 +506,11 @@ CLAUDEMD_EOF
       printf '#!/bin/bash\nprintf "%%s" "%s"\n' "${var.golive_repo_token}" > "$GOLIVE_ASKPASS"
       chmod 700 "$GOLIVE_ASKPASS"
       GIT_ASKPASS="$GOLIVE_ASKPASS" GIT_TERMINAL_PROMPT=0 \
-        git clone --depth 1 "https://x-access-token@github.com/${var.golive_repo}.git" /opt/golive-src
+        git clone --depth 1 --branch "${var.golive_repo_ref}" "https://x-access-token@github.com/${var.golive_repo}.git" /opt/golive-src
       GOLIVE_CLONE_STATUS=$?
       rm -f "$GOLIVE_ASKPASS"
     else
-      GIT_TERMINAL_PROMPT=0 git clone --depth 1 "https://github.com/${var.golive_repo}.git" /opt/golive-src
+      GIT_TERMINAL_PROMPT=0 git clone --depth 1 --branch "${var.golive_repo_ref}" "https://github.com/${var.golive_repo}.git" /opt/golive-src
       GOLIVE_CLONE_STATUS=$?
     fi
     # go-live/main.tf erwartet scripts/ als Geschwisterordner (../scripts/
