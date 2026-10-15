@@ -481,6 +481,7 @@ CLAUDEMD_EOF
     # (coder_app.go_live) direkt loslegen kann. Siehe README, Abschnitt
     # "Go live", fuer den gesamten Ablauf.
     if ! command -v terraform >/dev/null 2>&1; then
+      command -v unzip >/dev/null 2>&1 || apt-get install -y unzip
       curl -fsSL -o /tmp/tf.zip https://releases.hashicorp.com/terraform/1.9.8/terraform_1.9.8_linux_amd64.zip
       unzip -o /tmp/tf.zip -d /usr/local/bin >/dev/null
       rm -f /tmp/tf.zip
