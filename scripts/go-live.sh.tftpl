@@ -1,11 +1,17 @@
 #!/bin/bash
 set -e
 
-GOLIVE_DIR=/opt/golive-src/go-live
 REGISTRY_URL='${registry_url}'
+ADMIN_UI_URL='${admin_ui_url}'
+ADMIN_UI_TOKEN='${admin_ui_token}'
 
 echo "=== Go live ==="
 echo
+
+if [ -z "$ADMIN_UI_URL" ] || [ -z "$ADMIN_UI_TOKEN" ]; then
+  echo "golive_admin_ui_url / golive_admin_ui_token sind nicht gesetzt (siehe README, Abschnitt 'Go live')." >&2
+  exit 1
+fi
 
 CONTAINER=$(docker ps --filter "publish=8080" --format '{{.Names}}' | head -n1)
 if [ -z "$CONTAINER" ]; then
@@ -18,11 +24,7 @@ echo "Image: $IMAGE"
 echo
 
 read -rp "Kurzer, eindeutiger Site-Name (z.B. kundenname-website): " SITE_NAME
-read -rp "Kundendomain (z.B. kunde.example.com): " CUSTOMER_DOMAIN
-read -rp "Newt-ID (aus Pangolin beim Anlegen der Site kopiert): " NEWT_ID
-read -rsp "Newt-Secret: " NEWT_SECRET
-echo
-echo
+read -rp "Kundendomain (z.B. kunde.example.com, nur Doku): " CUSTOMER_DOMAIN
 
 if [ -z "$SITE_NAME" ]; then
   echo "Site-Name darf nicht leer sein, Abbruch." >&2
@@ -30,19 +32,26 @@ if [ -z "$SITE_NAME" ]; then
 fi
 
 TAG="$SITE_NAME:$(date +%Y%m%d%H%M%S)"
-REGISTRY_IMAGE="$REGISTRY_URL/$TAG"
 
-echo "Pushe $IMAGE als $REGISTRY_IMAGE ..."
-docker tag "$IMAGE" "$REGISTRY_IMAGE"
-docker push "$REGISTRY_IMAGE"
+echo "Pushe $IMAGE als $REGISTRY_URL/$TAG ..."
+docker tag "$IMAGE" "$REGISTRY_URL/$TAG"
+docker push "$REGISTRY_URL/$TAG"
+
+json_escape() {
+  printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
+}
 
 echo
-echo "Starte Terraform-Apply in $GOLIVE_DIR ..."
-cd "$GOLIVE_DIR"
-terraform init -input=false
-terraform apply -auto-approve \
-  -var "site_name=$SITE_NAME" \
-  -var "customer_domain=$CUSTOMER_DOMAIN" \
-  -var "docker_image=$TAG" \
-  -var "newt_id=$NEWT_ID" \
-  -var "newt_secret=$NEWT_SECRET"
+echo "Registriere bei der Go-live-Admin-UI ($ADMIN_UI_URL) ..."
+BODY=$(printf '{"site_name":"%s","customer_domain":"%s","docker_image":"%s"}' \
+  "$(json_escape "$SITE_NAME")" "$(json_escape "$CUSTOMER_DOMAIN")" "$(json_escape "$TAG")")
+
+RESPONSE=$(curl -fsS -X POST "$ADMIN_UI_URL/api/sites" \
+  -H "Authorization: Bearer $ADMIN_UI_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "$BODY")
+
+echo "$RESPONSE"
+echo
+echo "Fortschritt verfolgen: $ADMIN_UI_URL/sites/$SITE_NAME"
+echo "(Provisionierung laeuft im Hintergrund in der Admin-UI, dauert typischerweise ein paar Minuten.)"

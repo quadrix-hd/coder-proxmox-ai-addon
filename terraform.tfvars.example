@@ -36,31 +36,15 @@ pm_tls_insecure = "false"    # String-Literal; "true" nur falls kein Proxmox-Zer
 
 # Optional: "Go live" - Button zum Promoten einer fertigen Seite in eine
 # dauerhafte, von Coder unabhaengige Produktions-LXC. Erfordert eine
-# private Registry (registry/README.md) und einen dedizierten SSH-Key
-# (NICHT derselbe wie oben fuer normale Dev-Workspaces). Siehe README
-# ("Optional: Go live") fuer den vollstaendigen Ablauf.
+# private Registry (registry/README.md) und die zentrale Admin-UI
+# (admin-ui/README.md), die die eigentliche Provisionierung uebernimmt.
+# Siehe README ("Optional: Go live") fuer den vollstaendigen Ablauf.
 #
-# Die beiden *_path-Variablen sind Dateipfade aus Sicht des Terraform-Laufs
-# selbst - bei einem Docker-Compose-Setup also INNERHALB des coder-
-# Containers, nicht zwingend derselbe Pfad wie auf dem Docker-Host (siehe
-# README fuer den noetigen chown + Volume-Mount-Schritt, genau wie beim
-# bestehenden Dev-Workspace-SSH-Key). Terraform liest die Dateien direkt
-# ein, kein manuelles Reinkopieren/Escapen des Key-Inhalts noetig.
-# golive_enabled              = "true"
-# golive_ssh_public_key_path  = "/home/coder/.ssh/golive_id_rsa.pub"
-# golive_ssh_private_key_path = "/home/coder/.ssh/golive_id_rsa"
-#
-# golive_repo ist standardmaessig dieses Repo selbst - und das ist privat.
-# Ohne golive_repo_token (ein GitHub-Token mit Lesezugriff darauf) schlaegt
-# der Clone beim Workspace-Start fehl und der "Go live"-Button bleibt ohne
-# Setup (sichtbar im Startup-Log als "Klonen ... fehlgeschlagen"). Leer
-# lassen nur, wenn golive_repo auf ein oeffentliches Repo zeigt.
-# golive_repo_token = "ghp_..."
-#
-# Nur beim Testen eines noch nicht gemergten go-live-Feature-Branches noetig
-# (golive_repo_ref default ist "main"):
-# golive_repo_ref = "feature/go-live-production-deploy"
-# golive_registry_url      = "10.0.75.1:5000"
-# golive_registry_user     = "golive"
+# golive_admin_ui_token muss exakt mit ADMIN_UI_API_TOKEN aus admin-ui/.env
+# uebereinstimmen.
+# golive_enabled         = "true"
+# golive_registry_url    = "10.0.75.1:5000"
+# golive_registry_user   = "golive"
 # golive_registry_password = "..."
-# golive_newt_endpoint     = "https://pangolin.example.com"
+# golive_admin_ui_url    = "http://10.0.75.1:9000"
+# golive_admin_ui_token  = "..."

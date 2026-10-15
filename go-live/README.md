@@ -5,44 +5,21 @@ permanent, Coder-independent production LXC, connected to the outside
 world via [Pangolin](https://pangolin.net) (tunneled reverse proxy — no
 public IP needed on the production LXC itself).
 
-Normally triggered via the "Go live" button inside a dev workspace (see the
-main README's "Go live" section), which runs this stack with the right
-variables already filled in. You can also run it manually from here.
+**This stack itself is unchanged in shape** (same resource, same
+variables) — what changed is *who calls it*. It's no longer run from
+inside an ephemeral dev workspace on every "Go live" click; it's now
+called by [`../admin-ui/`](../admin-ui/README.md), a small always-on
+service that keeps one persistent Terraform state per customer site (via
+`terraform workspace`) so updates and teardowns are ordinary, idempotent
+operations instead of manual SSH. See the main README's "Optional: Go
+live" section for the full picture and why this changed.
 
-## One-time setup (per environment, not per customer)
+You normally never run this directory's `terraform` commands directly —
+use the admin-ui's web interface instead. The manual instructions below
+remain for debugging or if you want to provision a one-off site without
+setting up the admin-ui at all.
 
-1. **Private registry** running — see `../registry/README.md`.
-2. **A dedicated SSH keypair for go-live provisioning**, separate from the
-   key used for normal dev workspaces:
-   ```bash
-   ssh-keygen -t rsa -b 4096 -f ~/golive-ssh-key -N ""
-   ```
-   `coder templates push` runs Terraform *inside* the `coder` container as
-   the non-root `coder` user — same situation as the regular dev-workspace
-   key, so this one also needs `chown`ing and bind-mounting into the
-   container rather than just referenced by a host path. See the main
-   README's "Optional: Go live" section for the exact `chown`/
-   `docker-compose.yaml` steps. The private key's in-container path goes
-   into every dev workspace (via `golive_ssh_private_key_path` in the main
-   template's `terraform.tfvars` — Terraform reads the file directly, no
-   need to paste/escape the key content anywhere) so the "Go live" button
-   can use it; it's intentionally not the same key used to provision dev workspaces themselves, to keep
-   the blast radius of a leak smaller.
-
-## One-time setup (per customer)
-
-In the Pangolin web UI: **Sites → Add Site → Type: Newt**. Give it a name
-matching your `site_name` (e.g. `kundenname-website`). Pangolin shows a
-Newt ID and Secret **once** — copy both immediately, you'll need them as
-`newt_id`/`newt_secret` here. If you lose them, delete the site and
-recreate it.
-
-(Not automated here — see the note in the main README about why: the
-community Terraform providers for Pangolin weren't verifiable from the
-environment this was built in, and getting production domain-routing
-automation wrong is worse than a 2-minute manual step.)
-
-## Running it directly
+## Running it manually (debugging / one-off, bypassing admin-ui)
 
 ```bash
 cd go-live
@@ -66,29 +43,27 @@ newt_endpoint         = "https://pangolin.example.com"
 newt_id               = "..."
 newt_secret           = "..."
 EOF
+terraform workspace new kundenname-website   # isolates this site's state - matches what admin-ui does automatically
 terraform init
 terraform apply
 ```
 
-## Updating an already-live site
+You'll still need a Newt site created in Pangolin first (manually, or via
+`admin-ui`'s Pangolin client used standalone) to get `newt_id`/`newt_secret`
+— see the main README's "Optional: Go live" section.
 
-There's no shared Terraform state across runs (see the warning at the top
-of `main.tf`) — treat a later update as an operational task, not a
-Terraform one:
+## Updating or removing a site provisioned this way
+
+Since you created it outside admin-ui's tracking, it also won't show up in
+admin-ui's site list. Use plain Terraform in this directory with the same
+workspace selected:
 
 ```bash
-# Push a new image tag to the registry, then on the production LXC itself:
-ssh root@<production-ip>
-docker pull <registry>/<image>:<new-tag>
-docker stop site && docker rm site
-docker run -d --name site --restart unless-stopped -p 8080:80 <registry>/<image>:<new-tag>
+terraform workspace select kundenname-website
+terraform apply   -var docker_image=kundenname-website:new-tag   # update
+terraform destroy                                                # remove
 ```
 
-## Taking a site down permanently
-
-Delete the LXC directly in the Proxmox UI (or `pct destroy <vmid>` on the
-Proxmox host), and remove the corresponding Site in Pangolin. Nothing in
-Coder or this Terraform stack tracks these LXCs after creation, so there's
-no "undo" command — this is a manual, deliberate action by design, so a
-customer's live site is never at risk of being torn down by an unrelated
-Terraform change elsewhere in this repo.
+If you provisioned a site through the admin-ui instead (the normal path),
+manage it from there — it already has this directory's state, under the
+same `terraform workspace` mechanism, in its own persistent volume.

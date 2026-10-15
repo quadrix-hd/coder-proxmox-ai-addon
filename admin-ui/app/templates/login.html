@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <title>Login</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 360px; margin: 4rem auto; padding: 0 1rem; }
+    input, button { font-size: 1rem; padding: 0.5rem; width: 100%; box-sizing: border-box; margin-top: 0.5rem; }
+    .error { background: #fbd5d5; color: #a31515; padding: 0.6rem; border-radius: 4px; margin-bottom: 1rem; }
+  </style>
+</head>
+<body>
+  <h1>Go live - Admin</h1>
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+  <form method="post">
+    <input type="password" name="password" placeholder="Passwort" autofocus required>
+    <button type="submit">Login</button>
+  </form>
+</body>
+</html>

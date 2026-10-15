@@ -295,66 +295,44 @@ coder templates push lxc-claude-task -d .
 
 For a managed-offering setup where customers never touch Coder themselves (your team builds sites in dev workspaces, customers only give design input): a "Go live" button that takes the site currently running in a dev workspace and deploys it to a **permanent, Coder-independent** production LXC, reachable under the customer's own domain via [Pangolin](https://pangolin.net) (tunneled reverse proxy — the production LXC needs no public IP or inbound firewall rule).
 
-This is a genuinely separate piece of infrastructure from the rest of this template, not just a Terraform variable — see [`go-live/README.md`](go-live/README.md) for the full design, and [`registry/README.md`](registry/README.md) for the private registry it depends on. Short version of the moving parts:
+This is a genuinely separate piece of infrastructure from the rest of this template, not just a Terraform variable. Three moving parts:
 
-- **`registry/`** — a self-hosted private Docker registry (plain `registry:2`, the same open-source project Docker Hub itself runs on) that dev workspaces push finished images to, and production LXCs pull from.
-- **`go-live/`** — a standalone Terraform stack (own state, own variables, **not** wired into the main workspace template) that provisions a dedicated production LXC, deploys the image, and starts a [Newt](https://github.com/fosrl/newt) tunnel client connecting it to your Pangolin server.
-- **A `coder_app` "Go live" button** inside the dev workspace (only when `golive_enabled = true`) that pushes the running demo container's image to the registry, asks for a site name/customer domain/Pangolin Newt credentials, and runs the `go-live/` stack.
+- **`registry/`** — a self-hosted private Docker registry (plain `registry:2`) that dev workspaces push finished images to, and production LXCs pull from. See [`registry/README.md`](registry/README.md).
+- **`admin-ui/`** — a small, **dauerhaft laufende** (always-on, not per-workspace) web app that owns all the credentials this needs (Proxmox API token, the dedicated go-live SSH key, registry credentials, optionally a Pangolin API key) and does the actual provisioning. Lists every live customer site, lets you redeploy a new image or tear a site down **at any time** through the browser, instead of SSHing in by hand. See [`admin-ui/README.md`](admin-ui/README.md) for setup.
+- **`go-live/`** — the Terraform stack that actually creates the production LXC (unchanged in shape, now called by `admin-ui/` instead of from inside a dev workspace — see below for why, and [`go-live/README.md`](go-live/README.md) for details).
+- **A `coder_app` "Go live" button** inside the dev workspace (only when `golive_enabled = true`) that pushes the running demo container's image to the registry and then just calls the admin-ui's API — it no longer runs Terraform itself.
 
-**What's automated vs. manual, and why:** server provisioning and deployment are fully automated by the button. Registering the domain in Pangolin itself (creating the Site, then a Resource binding the domain to it) is a deliberate **manual** step in Pangolin's own web UI — the community Terraform providers for Pangolin are fragmented across incompatible forks with unverified schemas, and automating that against the wrong schema risks silently misrouting a customer's domain. A 2-minute manual click-through in Pangolin's UI per new customer is the safer trade. If you later verify a reliable automation path against your specific Pangolin version, `go-live/main.tf` is the place to add it.
+**Why centralize into `admin-ui/` instead of running everything from the dev workspace button (the original design)?** Two reasons, found the hard way while building and testing this:
+1. **Credentials stayed scattered.** Every dev workspace needed its own copy of the Proxmox token, SSH key and registry/Pangolin credentials just to run the button once. Centralizing them into one long-lived service shrinks the blast radius of a single compromised workspace to "can ask the admin-ui to create a site" rather than "holds the keys to production directly."
+2. **No persistent state, no way to change anything later.** The old design ran `terraform apply` fresh inside an ephemeral, non-root dev-workspace container on every click, with no state kept afterwards — updating or removing a live site meant manual SSH (see git history of `go-live/README.md`). `admin-ui/` keeps one persistent Terraform state per site (via `terraform workspace`), so redeploying a new image or tearing a site down is now an ordinary, idempotent action in the UI.
+
+**What's automated vs. manual, and why:** server provisioning, deployment and redeploys are fully automated. Pangolin domain registration (the customer-facing tunnel/routing) can *optionally* be automated too, via Pangolin's own Integration API — see `admin-ui/README.md`'s "Pangolin-Integration" section for exactly what's verified and what isn't (short version: the API shape is reconstructed from documentation search snippets, not confirmed against a live Pangolin instance — test it against one throwaway site before trusting it for a real customer). Without that configured, it falls back to the original fully-manual flow: create the Newt site by hand in Pangolin's UI, paste the Newt ID/secret into the admin-ui's "new site" form. A brand-new customer **apex domain** needs a one-time manual "Add Domain" + DNS verification step in Pangolin either way — that's inherent to proving domain ownership, not something any amount of automation here can skip.
 
 ### One-time setup
 
 1. Set up the registry (`registry/README.md`) and note its URL.
-2. Generate a **dedicated** SSH keypair for go-live provisioning — intentionally not the same key used for normal dev workspaces, to limit blast radius. Do this on the Docker host (same as section "2. SSH key for the Coder container"), **not** inside the `coder` container:
-   ```bash
-   ssh-keygen -t rsa -b 4096 -f ~/golive-ssh-key -N ""
-   ```
-   `coder templates push` runs its Terraform provisioning *inside* the `coder` container, as the non-root `coder` user (check with `docker exec -it coder-coder-1 id`) — not as root, and not with access to anything under the container's own `/root`. So, exactly like the existing dev-workspace SSH key, this one needs to be `chown`'d and bind-mounted into the container rather than just referenced by a host path:
-   ```bash
-   chown 1000:1000 ~/golive-ssh-key ~/golive-ssh-key.pub   # adjust UID if `docker exec -it coder-coder-1 id` shows something else
-   chmod 600 ~/golive-ssh-key
-   chmod 644 ~/golive-ssh-key.pub
-   ```
-   Add to your `docker-compose.yaml` under the `coder` service's `volumes:` (alongside the existing `coder-ssh-key` mounts):
-   ```yaml
-       - ~/golive-ssh-key:/home/coder/.ssh/golive_id_rsa
-       - ~/golive-ssh-key.pub:/home/coder/.ssh/golive_id_rsa.pub
-   ```
-   Then `docker compose up -d --force-recreate coder`.
-3. Add to your `terraform.tfvars`, using the **in-container** paths from the mount above (not the host paths) — Terraform reads them with `file()`, same as the main template already does for the regular workspace SSH key, so there's no copy-pasting or escaping the key content by hand:
+2. Set up the admin-ui (`admin-ui/README.md`) — this is where the dedicated go-live SSH key, Proxmox credentials, and (optionally) Pangolin API key now live. Note its URL and the `ADMIN_UI_API_TOKEN` you generate for it.
+3. Add to your `terraform.tfvars`:
    ```hcl
-   golive_enabled              = "true"
-   golive_ssh_public_key_path  = "/home/coder/.ssh/golive_id_rsa.pub"
-   golive_ssh_private_key_path = "/home/coder/.ssh/golive_id_rsa"
-   golive_registry_url         = "10.0.75.1:5000"
-   golive_registry_user        = "golive"
-   golive_registry_password    = "..."
-   golive_newt_endpoint        = "https://pangolin.example.com"
+   golive_enabled            = "true"
+   golive_registry_url       = "10.0.75.1:5000"
+   golive_registry_user      = "golive"
+   golive_registry_password  = "..."
+   golive_admin_ui_url       = "http://10.0.75.1:9000"
+   golive_admin_ui_token     = "..."   # must match ADMIN_UI_API_TOKEN in admin-ui/.env
    ```
-   `golive_repo` defaults to this repo itself, which is typically **private** — the startup script clones it fresh into every workspace to get the current `go-live/` stack. A private repo needs read access for that clone, so also set:
-   ```hcl
-   golive_repo_token = "ghp_..."   # GitHub token with read access to golive_repo
-   ```
-   Leave it empty only if `golive_repo` points at a public repo. Without it, the clone fails silently at startup and the "Go live" button has nothing to run (visible in the workspace's startup log as "Klonen ... fehlgeschlagen").
-
-   The clone always targets `golive_repo_ref` (default `main`). If you're testing a not-yet-merged go-live feature branch — i.e. the branch you just pushed this template from isn't `main` yet — set it explicitly, otherwise the clone pulls `main`, which won't have the `go-live/` directory yet:
-   ```hcl
-   golive_repo_ref = "feature/go-live-production-deploy"
-   ```
-4. `coder templates push lxc-claude-task -d .` — every dev workspace created from here on gets the "Go live" button, `terraform`, and a fresh clone of this repo's `go-live/` stack baked in at startup.
+4. `coder templates push lxc-claude-task -d .` — every dev workspace created from here on gets the "Go live" button.
 
 ### Per-customer flow
 
 1. Build and verify the site in a dev workspace as usual (port 8080 convention, demo button).
-2. In Pangolin: **Sites → Add Site → Type: Newt**, named after the customer. Copy the Newt ID and Secret it shows (once).
-3. Click **Go live** in the workspace. It'll ask for a site name, the customer's domain, and those two Newt values, then provision and deploy.
-4. In Pangolin: add a **Resource** for the customer's domain, targeting the new Newt site on port 8080.
-5. Point the customer's domain's DNS at your Pangolin setup (however you already do that for other tunneled sites).
+2. Click **Go live** in the workspace. It asks for a site name and the customer's domain, pushes the image to the registry, and registers the site with the admin-ui.
+3. Open the admin-ui (`golive_admin_ui_url`) and watch the site's status — it provisions the production LXC in the background (a couple of minutes). If Pangolin integration is configured, the tunnel/domain binding happens automatically too; otherwise follow the manual Pangolin steps described in `admin-ui/README.md`.
+4. For any later change (new image version, taking the site down): do it from the admin-ui's site detail page, not by SSHing into the production LXC by hand.
 
 ### Security note
 
-The "Go live" button provisions real production infrastructure directly from inside an otherwise-disposable dev workspace — every dev workspace therefore carries live Proxmox API credentials, the dedicated go-live SSH key, and registry credentials. That's a deliberate trade-off for simplicity here, appropriate when only your own trusted team has access to Coder (as opposed to external customers). If that ever changes, revisit this before enabling `golive_enabled`.
+Dev workspaces no longer carry live Proxmox/SSH/registry credentials — only a registry push login and the admin-ui's bearer token, which can only ask the admin-ui to create a site, not reach Proxmox or the production LXCs directly. The admin-ui itself holds the real credentials and should be reachable only from your internal network, behind its own login (see `admin-ui/README.md`).
 
 ---
 
@@ -371,9 +349,10 @@ The "Go live" button provisions real production infrastructure directly from ins
 │   ├── get_cluster_load.sh        Live load display for multi-node selection, any cluster size
 │   ├── allocate_sdn_ip.sh         Optional: atomic IP allocation via Proxmox SDN + IPAM
 │   ├── release_sdn_ip.sh          Optional: releases the SDN+IPAM reservation on workspace destroy
-│   └── go-live.sh.tftpl           Optional: the "Go live" button's script, templated into each workspace
+│   └── go-live.sh.tftpl           Optional: the "Go live" button's script (pushes image, calls admin-ui), templated into each workspace
 ├── registry/                      Optional: self-hosted private Docker registry for "Go live" images
-└── go-live/                       Optional: standalone Terraform stack that provisions production LXCs
+├── go-live/                       Optional: Terraform stack that provisions production LXCs, called by admin-ui/
+└── admin-ui/                      Optional: always-on web app that manages live "Go live" sites
 ```
 
 ### Key design decisions
@@ -425,9 +404,10 @@ The demo button is hardcoded to `http://localhost:8080`. Relying on every prompt
 | `terraform plan`/`push` fails with a TLS error against Proxmox | `pm_tls_insecure` is now `false` by default | Import the Proxmox certificate (see "1.3 Trust the Proxmox certificate"), or explicitly pass `pm_tls_insecure=true` if you accept the risk |
 | `allocate_sdn_ip.sh` fails with "sdn_zone/sdn_vnet sind nicht gesetzt" | `use_sdn_ipam=true` without `sdn_zone`/`sdn_vnet` | Pass both variables (see "Optional: SDN + IPAM") |
 | `allocate_sdn_ip.sh` fails with a 5xx that isn't "IP already exist" | Zone/VNet/Subnet not set up correctly, or the token lacks `SDN.Allocate` permission | Check **Datacenter → SDN** is applied, and that the API token's role includes `SDN.Allocate` on `/sdn/zones/<zone>/<vnet>` |
-| `terraform plan` fails on `golive_ssh_*_key_path` with "permission denied" | The key file is only readable by root, but Terraform runs inside the `coder` container as a non-root user (`docker exec -it coder-coder-1 id` to check) | `chown` the key to that UID on the host and bind-mount it into the container (see "Optional: Go live" → step 2) — a host path alone isn't visible/readable inside the container |
-| "Go live" button: `common.auto.tfvars: No such file or directory` in the startup log | `golive_repo` is private (the default, since it's usually this repo itself) and the anonymous `git clone` at startup failed, so `go-live/` was never cloned | Set `golive_repo_token` to a GitHub token with read access to `golive_repo` (see "Optional: Go live" → step 3), then push a fresh workspace |
-| Startup log shows `Klonen von ... fehlgeschlagen oder go-live/ fehlt im Repo` even with `golive_repo_token` set correctly | `golive_repo_ref` defaults to `main`, which clones fine but won't contain `go-live/` if you're testing it from a not-yet-merged feature branch | Set `golive_repo_ref` to the branch you're actually testing (see "Optional: Go live" → step 3) |
+| "Go live" button fails with "golive_admin_ui_url / golive_admin_ui_token sind nicht gesetzt" | Those two `terraform.tfvars` values are missing or empty | Set them (see "Optional: Go live" → step 3) and push the template again |
+| "Go live" button's `curl` to the admin-ui fails/times out | Workspace can't reach `golive_admin_ui_url` over the network, or the admin-ui container isn't running | Check the admin-ui is up (`docker compose ps` in `admin-ui/`) and reachable from the Proxmox LXC subnet, not just the Docker host |
+| admin-ui `POST /api/sites` returns 401 | `golive_admin_ui_token` in `terraform.tfvars` doesn't match `ADMIN_UI_API_TOKEN` in `admin-ui/.env` | Make both identical, restart the admin-ui container if you changed `.env` |
+| A site's status stays stuck on `provisioning_lxc` / shows an error | Check `last_error` on the site's detail page in the admin-ui, and `docker compose logs -f admin-ui` for the full terraform output | Fix the underlying issue (same debugging as any terraform apply against this repo), then redeploy/retry from the UI |
 
 ---
 
@@ -437,8 +417,9 @@ The demo button is hardcoded to `http://localhost:8080`. Relying on every prompt
 - **Watchdog doesn't detect a missing Claude installation**: if the initial install fails entirely (e.g. network error), the watchdog currently only checks whether `agentapi` is running — not whether `claude` itself is installed. Manual reinstallation is required in that case (see Troubleshooting)
 - **No live failover for running workspaces**: node selection only applies at creation time. A running workspace is never automatically migrated to another node, even if its node becomes heavily loaded
 - **IP allocation is atomic only if you opt into SDN+IPAM**: by default, `find_free_ip.sh` reads the actually-configured IPs from every VM/LXC via the Proxmox API instead of pinging, which is far more reliable than ping, but two `terraform apply` runs racing at the exact same moment could in theory still pick the same "free" IP. Setting `use_sdn_ipam = true` (see "Optional: SDN + IPAM" above) closes this gap using Proxmox's own IPAM locking — but it's opt-in, not the default, since it needs a one-time SDN setup on the Proxmox side first. Note: the `telmate/proxmox` provider pinned here can't read back a container's IP when `network.ip = "dhcp"` ([open upstream issue](https://github.com/Telmate/terraform-provider-proxmox/issues/1453)), which is why even the SDN path pre-allocates the IP via the IPAM API and assigns it statically, rather than letting the container DHCP it at boot.
-- **Planned, not yet built**: automating the Pangolin-side domain registration for "Go live" (Site/Resource/Target creation) — currently a manual step in Pangolin's UI, see "Optional: Go live" above for why
+- **Pangolin API automation in `admin-ui/` is unverified against a live instance**: `admin-ui/app/pangolin_client.py` automates Site/Resource/Target creation via Pangolin's Integration API, but the endpoint paths/request/response shapes are reconstructed from documentation search snippets (direct access to `docs.pangolin.net` is DNS-blocked from this repo's development sandbox) plus a third-party reference tool, not from reading the actual Swagger spec. See the big comment at the top of that file and `admin-ui/README.md`'s "Pangolin-Integration" section before relying on it for a real customer — test against one throwaway site first, and diff against `<your-pangolin-url>/v1/docs`. Leaving `PANGOLIN_API_URL`/`KEY`/`ORG_ID` unset falls back to the original fully-manual Pangolin flow.
 - **`go-live/`'s Newt container env vars are unverified against a live Pangolin instance**: `docker run ... -e PANGOLIN_ENDPOINT=... -e NEWT_ID=... -e NEWT_SECRET=... fosrl/newt` in `go-live/main.tf` is based on documented Newt configuration conventions, but this repo's development environment couldn't reach `docs.pangolin.net`/the Newt GitHub repo to confirm the exact env var names for the version you're running. Double-check against [github.com/fosrl/newt](https://github.com/fosrl/newt) before your first real "Go live" — if the names differ, the container will just fail to connect (visible immediately as "Offline" in Pangolin's Sites list), not silently misbehave.
+- **admin-ui serializes all terraform runs through one lock**: `provision_site`/`teardown_site` run in a background Python thread per request, but all actual `terraform` invocations go through a single lock (`app/terraform_runner.py`) to prevent two simultaneous "Go live" clicks from racing on the shared `go-live/` working directory's selected-workspace state. Correct, but means a second click waits for the first site's apply to finish rather than running in parallel — fine for the "handful of customer sites, one admin clicking at a time" scale this was built for; worth revisiting (a real job queue, one working directory per site) if usage grows.
 - **One shared, static SSH key for every workspace, forever**: `proxmox_lxc.workspace.ssh_public_keys` uses the same key (`~/.ssh/coder-ssh-key` on the Coder host) for every workspace it has ever created. If that key leaks, every existing *and future* workspace is reachable as root until someone manually rotates it everywhere. There's no per-workspace key, no expiry, no rotation story. Low risk for a single trusted operator; a real gap the moment more than one person can trigger workspace creation.
 - **`use_sdn_ipam=true` claims a fresh IP on every workspace start/stop, not just on creation**: Terraform re-evaluates `data "external"` sources on every apply, including a plain restart of an already-existing workspace. `allocate_sdn_ip.sh` has no way to know "this workspace already has an IP, don't claim a new one" — each restart burns one more IP in the configured range, orphaned in Proxmox's IPAM (the actual container keeps its original IP, since `network` is in `ignore_changes`, but the spurious claim still sits in **Datacenter → SDN → IPAM**). Over enough start/stop cycles, this can exhaust the configured range even though far fewer workspaces are actually running. Not a problem for the default (non-SDN) path, which only *reads* state and never claims anything. Until this is fixed, periodically check **Datacenter → SDN → IPAM** for stale entries if you have `use_sdn_ipam` on, or just don't enable it in a workspace mix with frequent restarts yet.
 

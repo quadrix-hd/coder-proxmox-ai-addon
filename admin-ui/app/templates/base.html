@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <title>{% block title %}Go live{% endblock %}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 960px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+    h1 { font-size: 1.4rem; }
+    table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+    th, td { text-align: left; padding: 0.5rem; border-bottom: 1px solid #ddd; }
+    .status { padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.85rem; }
+    .status-live { background: #d4f4dd; color: #1a7a33; }
+    .status-error { background: #fbd5d5; color: #a31515; }
+    .status-provisioning, .status-provisioning_lxc, .status-creating_pangolin_site,
+    .status-creating_pangolin_resource, .status-pending, .status-deleting { background: #fff3cd; color: #8a6400; }
+    form.inline { display: inline; }
+    input, button, select { font-size: 1rem; padding: 0.4rem; }
+    label { display: block; margin-top: 0.8rem; font-weight: 600; }
+    .error { background: #fbd5d5; color: #a31515; padding: 0.6rem; border-radius: 4px; margin: 1rem 0; }
+    .hint { color: #666; font-size: 0.85rem; }
+    nav { margin-bottom: 1.5rem; }
+    nav a { margin-right: 1rem; }
+    pre { background: #f5f5f5; padding: 0.8rem; overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="{{ url_for('sites_list') }}">Sites</a>
+    <a href="{{ url_for('site_new') }}">+ Neue Site</a>
+    <form class="inline" method="post" action="{{ url_for('logout') }}" style="float:right">
+      <button type="submit">Logout</button>
+    </form>
+  </nav>
+  {% block content %}{% endblock %}
+</body>
+</html>
