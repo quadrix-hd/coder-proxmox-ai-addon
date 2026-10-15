@@ -332,6 +332,11 @@ This is a genuinely separate piece of infrastructure from the rest of this templ
    golive_registry_password    = "..."
    golive_newt_endpoint        = "https://pangolin.example.com"
    ```
+   `golive_repo` defaults to this repo itself, which is typically **private** — the startup script clones it fresh into every workspace to get the current `go-live/` stack. A private repo needs read access for that clone, so also set:
+   ```hcl
+   golive_repo_token = "ghp_..."   # GitHub token with read access to golive_repo
+   ```
+   Leave it empty only if `golive_repo` points at a public repo. Without it, the clone fails silently at startup and the "Go live" button has nothing to run (visible in the workspace's startup log as "Klonen ... fehlgeschlagen").
 4. `coder templates push lxc-claude-task -d .` — every dev workspace created from here on gets the "Go live" button, `terraform`, and a fresh clone of this repo's `go-live/` stack baked in at startup.
 
 ### Per-customer flow
@@ -416,6 +421,7 @@ The demo button is hardcoded to `http://localhost:8080`. Relying on every prompt
 | `allocate_sdn_ip.sh` fails with "sdn_zone/sdn_vnet sind nicht gesetzt" | `use_sdn_ipam=true` without `sdn_zone`/`sdn_vnet` | Pass both variables (see "Optional: SDN + IPAM") |
 | `allocate_sdn_ip.sh` fails with a 5xx that isn't "IP already exist" | Zone/VNet/Subnet not set up correctly, or the token lacks `SDN.Allocate` permission | Check **Datacenter → SDN** is applied, and that the API token's role includes `SDN.Allocate` on `/sdn/zones/<zone>/<vnet>` |
 | `terraform plan` fails on `golive_ssh_*_key_path` with "permission denied" | The key file is only readable by root, but Terraform runs inside the `coder` container as a non-root user (`docker exec -it coder-coder-1 id` to check) | `chown` the key to that UID on the host and bind-mount it into the container (see "Optional: Go live" → step 2) — a host path alone isn't visible/readable inside the container |
+| "Go live" button: `common.auto.tfvars: No such file or directory` in the startup log | `golive_repo` is private (the default, since it's usually this repo itself) and the anonymous `git clone` at startup failed, so `go-live/` was never cloned | Set `golive_repo_token` to a GitHub token with read access to `golive_repo` (see "Optional: Go live" → step 3), then push a fresh workspace |
 
 ---
 

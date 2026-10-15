@@ -49,6 +49,13 @@ pm_tls_insecure = "false"    # String-Literal; "true" nur falls kein Proxmox-Zer
 # golive_enabled              = "true"
 # golive_ssh_public_key_path  = "/home/coder/.ssh/golive_id_rsa.pub"
 # golive_ssh_private_key_path = "/home/coder/.ssh/golive_id_rsa"
+#
+# golive_repo ist standardmaessig dieses Repo selbst - und das ist privat.
+# Ohne golive_repo_token (ein GitHub-Token mit Lesezugriff darauf) schlaegt
+# der Clone beim Workspace-Start fehl und der "Go live"-Button bleibt ohne
+# Setup (sichtbar im Startup-Log als "Klonen ... fehlgeschlagen"). Leer
+# lassen nur, wenn golive_repo auf ein oeffentliches Repo zeigt.
+# golive_repo_token = "ghp_..."
 # golive_registry_url      = "10.0.75.1:5000"
 # golive_registry_user     = "golive"
 # golive_registry_password = "..."

@@ -143,6 +143,13 @@ variable "golive_repo" {
   default     = "quadrix-hd/coder-proxmox-ai-addon"
 }
 
+variable "golive_repo_token" {
+  type        = string
+  sensitive   = true
+  default     = ""
+  description = "GitHub-Token mit Lesezugriff auf golive_repo, falls dieses Repo privat ist (z.B. dieses Repo selbst, im Standardfall). Leer lassen, wenn golive_repo oeffentlich ist. Laeuft wie skills_repo_token ueber GIT_ASKPASS."
+}
+
 # ---------------------------------------------------------
 # Proxmox Provider
 # ---------------------------------------------------------
@@ -488,26 +495,41 @@ CLAUDEMD_EOF
     fi
 
     rm -rf /opt/golive-src
-    git clone --depth 1 "https://github.com/${var.golive_repo}.git" /opt/golive-src 2>/dev/null || true
+    if [ -n "${var.golive_repo_token}" ]; then
+      GOLIVE_ASKPASS=$(mktemp)
+      printf '#!/bin/bash\nprintf "%%s" "%s"\n' "${var.golive_repo_token}" > "$GOLIVE_ASKPASS"
+      chmod 700 "$GOLIVE_ASKPASS"
+      GIT_ASKPASS="$GOLIVE_ASKPASS" GIT_TERMINAL_PROMPT=0 \
+        git clone --depth 1 "https://x-access-token@github.com/${var.golive_repo}.git" /opt/golive-src
+      GOLIVE_CLONE_STATUS=$?
+      rm -f "$GOLIVE_ASKPASS"
+    else
+      GIT_TERMINAL_PROMPT=0 git clone --depth 1 "https://github.com/${var.golive_repo}.git" /opt/golive-src
+      GOLIVE_CLONE_STATUS=$?
+    fi
     # go-live/main.tf erwartet scripts/ als Geschwisterordner (../scripts/
     # find_free_ip.sh) - der komplette geklonte Baum bleibt deshalb intakt,
     # statt Teile in separate Verzeichnisse zu kopieren.
 
-    mkdir -p /root/.ssh
-    echo '${base64encode(file(var.golive_ssh_private_key_path))}' | base64 -d > /root/.ssh/golive_id_rsa
-    chmod 600 /root/.ssh/golive_id_rsa
-    echo '${base64encode(file(var.golive_ssh_public_key_path))}' | base64 -d > /root/.ssh/golive_id_rsa.pub
+    if [ "$GOLIVE_CLONE_STATUS" -ne 0 ] || [ ! -d /opt/golive-src/go-live ]; then
+      echo "Go-live: Klonen von ${var.golive_repo} fehlgeschlagen oder go-live/ fehlt im Repo - 'Go live'-Button bleibt ohne Setup. Ist golive_repo privat? Dann golive_repo_token setzen." >&2
+    else
+      mkdir -p /root/.ssh
+      echo '${base64encode(file(var.golive_ssh_private_key_path))}' | base64 -d > /root/.ssh/golive_id_rsa
+      chmod 600 /root/.ssh/golive_id_rsa
+      echo '${base64encode(file(var.golive_ssh_public_key_path))}' | base64 -d > /root/.ssh/golive_id_rsa.pub
 
-    echo '${base64encode(local.golive_common_tfvars)}' | base64 -d > /opt/golive-src/go-live/common.auto.tfvars
-    chmod 600 /opt/golive-src/go-live/common.auto.tfvars
+      echo '${base64encode(local.golive_common_tfvars)}' | base64 -d > /opt/golive-src/go-live/common.auto.tfvars
+      chmod 600 /opt/golive-src/go-live/common.auto.tfvars
 
-    mkdir -p /etc/docker
-    echo '{"insecure-registries":["${var.golive_registry_url}"]}' > /etc/docker/daemon.json
-    systemctl restart docker || true
-    echo '${var.golive_registry_password}' | docker login ${var.golive_registry_url} -u '${var.golive_registry_user}' --password-stdin || true
+      mkdir -p /etc/docker
+      echo '{"insecure-registries":["${var.golive_registry_url}"]}' > /etc/docker/daemon.json
+      systemctl restart docker || true
+      echo '${var.golive_registry_password}' | docker login ${var.golive_registry_url} -u '${var.golive_registry_user}' --password-stdin || true
 
-    echo '${base64encode(templatefile("${path.module}/scripts/go-live.sh.tftpl", { registry_url = var.golive_registry_url }))}' | base64 -d > /usr/local/bin/go-live.sh
-    chmod +x /usr/local/bin/go-live.sh
+      echo '${base64encode(templatefile("${path.module}/scripts/go-live.sh.tftpl", { registry_url = var.golive_registry_url }))}' | base64 -d > /usr/local/bin/go-live.sh
+      chmod +x /usr/local/bin/go-live.sh
+    fi
 %{endif~}
   EOT
 }
