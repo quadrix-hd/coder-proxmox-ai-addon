@@ -9,7 +9,7 @@
 FROM python:3.12-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      curl unzip openssh-client ca-certificates \
+      curl unzip openssh-client ca-certificates jq \
     && rm -rf /var/lib/apt/lists/*
 
 ARG TERRAFORM_VERSION=1.9.8
