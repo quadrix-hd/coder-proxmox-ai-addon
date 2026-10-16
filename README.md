@@ -300,7 +300,7 @@ This is a genuinely separate piece of infrastructure from the rest of this templ
 - **`registry/`** — a self-hosted private Docker registry (plain `registry:2`) that dev workspaces push finished images to, and production LXCs pull from. See [`registry/README.md`](registry/README.md).
 - **`admin-ui/`** — a small, **dauerhaft laufende** (always-on, not per-workspace) web app that owns all the credentials this needs (Proxmox API token, the dedicated go-live SSH key, registry credentials, optionally a Pangolin API key) and does the actual provisioning. Lists every live customer site, lets you redeploy a new image or tear a site down **at any time** through the browser, instead of SSHing in by hand. See [`admin-ui/README.md`](admin-ui/README.md) for setup.
 - **`go-live/`** — the Terraform stack that actually creates the production LXC (unchanged in shape, now called by `admin-ui/` instead of from inside a dev workspace — see below for why, and [`go-live/README.md`](go-live/README.md) for details).
-- **A `coder_app` "Go live" button** inside the dev workspace (only when `golive_enabled = true`) that pushes the running demo container's image to the registry and then just calls the admin-ui's API — it no longer runs Terraform itself.
+- **Two `coder_app` buttons** inside the dev workspace (only when `golive_enabled = true`): **"Go live (Image pushen)"** runs one short, non-interactive terminal command that pushes the running demo container's image to the registry, then prints a link into the admin-ui's "new site" form with the image already filled in. **"Site-Verwaltung"** opens the admin-ui directly in a new tab (no terminal at all) — everything else (site name, domain, Newt credentials, status, redeploys, deletion) happens there, in a proper web form instead of terminal prompts.
 
 **Why centralize into `admin-ui/` instead of running everything from the dev workspace button (the original design)?** Two reasons, found the hard way while building and testing this:
 1. **Credentials stayed scattered.** Every dev workspace needed its own copy of the Proxmox token, SSH key and registry/Pangolin credentials just to run the button once. Centralizing them into one long-lived service shrinks the blast radius of a single compromised workspace to "can ask the admin-ui to create a site" rather than "holds the keys to production directly."
@@ -319,20 +319,21 @@ This is a genuinely separate piece of infrastructure from the rest of this templ
    golive_registry_user      = "golive"
    golive_registry_password  = "..."
    golive_admin_ui_url       = "http://10.0.75.1:9000"
-   golive_admin_ui_token     = "..."   # must match ADMIN_UI_API_TOKEN in admin-ui/.env
    ```
-4. `coder templates push lxc-claude-task -d .` — every dev workspace created from here on gets the "Go live" button.
+   (No bearer token needed here — the workspace doesn't call the admin-ui's API directly anymore, see below.)
+4. `coder templates push lxc-claude-task -d .` — every dev workspace created from here on gets both "Go live" buttons.
 
 ### Per-customer flow
 
 1. Build and verify the site in a dev workspace as usual (port 8080 convention, demo button).
-2. Click **Go live** in the workspace. It asks for a site name and the customer's domain, pushes the image to the registry, and registers the site with the admin-ui.
-3. Open the admin-ui (`golive_admin_ui_url`) and watch the site's status — it provisions the production LXC in the background (a couple of minutes). If Pangolin integration is configured, the tunnel/domain binding happens automatically too; otherwise follow the manual Pangolin steps described in `admin-ui/README.md`.
-4. For any later change (new image version, taking the site down): do it from the admin-ui's site detail page, not by SSHing into the production LXC by hand.
+2. Click **"Go live (Image pushen)"** in the workspace. It finds the demo container, pushes its image to the registry under a unique tag, and prints a link — no prompts, nothing else to type here.
+3. Click that link (or the **"Site-Verwaltung"** button, which is always there): it opens the admin-ui's "new site" form with the image already filled in. Enter the site name and customer domain, and (if Pangolin integration isn't configured) the Newt ID/secret from Pangolin's UI, then submit.
+4. Watch the site's status on its detail page — it provisions the production LXC in the background (a couple of minutes). If Pangolin integration is configured, the tunnel/domain binding happens automatically too; otherwise follow the manual Pangolin steps described in `admin-ui/README.md`.
+5. For any later change (new image version, taking the site down): do it from the admin-ui's site detail page (reachable any time via the **"Site-Verwaltung"** button), not by SSHing into the production LXC by hand.
 
 ### Security note
 
-Dev workspaces no longer carry live Proxmox/SSH/registry credentials — only a registry push login and the admin-ui's bearer token, which can only ask the admin-ui to create a site, not reach Proxmox or the production LXCs directly. The admin-ui itself holds the real credentials and should be reachable only from your internal network, behind its own login (see `admin-ui/README.md`).
+Dev workspaces no longer carry live Proxmox/SSH/registry credentials, nor even a token for the admin-ui — the push script needs only registry push access, and the admin-ui's web UI has its own separate login. The admin-ui itself holds the real credentials and should be reachable only from your internal network (see `admin-ui/README.md`).
 
 ---
 
@@ -404,9 +405,8 @@ The demo button is hardcoded to `http://localhost:8080`. Relying on every prompt
 | `terraform plan`/`push` fails with a TLS error against Proxmox | `pm_tls_insecure` is now `false` by default | Import the Proxmox certificate (see "1.3 Trust the Proxmox certificate"), or explicitly pass `pm_tls_insecure=true` if you accept the risk |
 | `allocate_sdn_ip.sh` fails with "sdn_zone/sdn_vnet sind nicht gesetzt" | `use_sdn_ipam=true` without `sdn_zone`/`sdn_vnet` | Pass both variables (see "Optional: SDN + IPAM") |
 | `allocate_sdn_ip.sh` fails with a 5xx that isn't "IP already exist" | Zone/VNet/Subnet not set up correctly, or the token lacks `SDN.Allocate` permission | Check **Datacenter → SDN** is applied, and that the API token's role includes `SDN.Allocate` on `/sdn/zones/<zone>/<vnet>` |
-| "Go live" button fails with "golive_admin_ui_url / golive_admin_ui_token sind nicht gesetzt" | Those two `terraform.tfvars` values are missing or empty | Set them (see "Optional: Go live" → step 3) and push the template again |
-| "Go live" button's `curl` to the admin-ui fails/times out | Workspace can't reach `golive_admin_ui_url` over the network, or the admin-ui container isn't running | Check the admin-ui is up (`docker compose ps` in `admin-ui/`) and reachable from the Proxmox LXC subnet, not just the Docker host |
-| admin-ui `POST /api/sites` returns 401 | `golive_admin_ui_token` in `terraform.tfvars` doesn't match `ADMIN_UI_API_TOKEN` in `admin-ui/.env` | Make both identical, restart the admin-ui container if you changed `.env` |
+| "Go live" button fails with "golive_admin_ui_url ist nicht gesetzt" | That `terraform.tfvars` value is missing or empty | Set `golive_admin_ui_url` (see "Optional: Go live" → step 3) and push the template again |
+| The link printed by "Go live (Image pushen)" doesn't open / "Site-Verwaltung" button doesn't load | Workspace's browser session can't reach `golive_admin_ui_url` over the network, or the admin-ui container isn't running | Check the admin-ui is up (`docker compose ps` in `admin-ui/`) and reachable from wherever you open Coder's web UI in a browser (not just from the Proxmox LXC subnet) |
 | A site's status stays stuck on `provisioning_lxc` / shows an error | Check `last_error` on the site's detail page in the admin-ui, and `docker compose logs -f admin-ui` for the full terraform output | Fix the underlying issue (same debugging as any terraform apply against this repo), then redeploy/retry from the UI |
 
 ---

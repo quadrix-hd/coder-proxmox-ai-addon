@@ -6,35 +6,41 @@
 {% if error %}<div class="error">{{ error }}</div>{% endif %}
 {% if pangolin_error %}<div class="error">Pangolin-API-Fehler beim Laden der Domains: {{ pangolin_error }}</div>{% endif %}
 
-<form method="post">
-  <label>Site-Name (kurz, eindeutig, z.B. kundenname-website)</label>
-  <input type="text" name="site_name" pattern="[a-z0-9-]+" required>
+<div class="card">
+  {% if prefill_image %}<p class="hint" style="margin-top:0;">Image aus dem "Go live"-Push im Workspace bereits eingetragen - Site-Name und Domain hier festlegen.</p>{% endif %}
 
-  <label>Kundendomain (nur Doku, falls Pangolin nicht automatisiert ist)</label>
-  <input type="text" name="customer_domain" placeholder="kunde.example.com">
+  <form method="post">
+    <label>Site-Name (kurz, eindeutig, z.B. kundenname-website)</label>
+    <input type="text" name="site_name" pattern="[a-z0-9-]+" required autofocus>
 
-  <label>Docker-Image:Tag (bereits in die Registry gepusht)</label>
-  <input type="text" name="docker_image" placeholder="kundenname-website:20260101120000" required>
+    <label>Kundendomain (nur Doku, falls Pangolin nicht automatisiert ist)</label>
+    <input type="text" name="customer_domain" placeholder="kunde.example.com">
 
-  {% if pangolin_enabled %}
-  <p class="hint">Pangolin-Integration aktiv: Site/Tunnel wird automatisch angelegt. Fuer die Domain-Zuordnung eine bereits in Pangolin registrierte Basis-Domain waehlen und den gewuenschten Subdomain-Teil eintragen.</p>
-  <label>Basis-Domain (in Pangolin registriert)</label>
-  <select name="pangolin_domain_id">
-    <option value="">- keine Resource automatisch anlegen, nur Site/Tunnel -</option>
-    {% for d in domains %}
-    <option value="{{ d.domainId or d.id }}">{{ d.domain or d.baseDomain or d.domainId }}</option>
-    {% endfor %}
-  </select>
-  <label>Subdomain</label>
-  <input type="text" name="pangolin_subdomain" placeholder="kundenname">
-  {% else %}
-  <p class="hint">Pangolin-Integration nicht konfiguriert (PANGOLIN_API_URL/KEY/ORG_ID). Site/Tunnel zuerst manuell in Pangolins WebUI anlegen (Sites -&gt; Add Site -&gt; Type: Newt), dann die angezeigten Werte hier eintragen.</p>
-  <label>Newt-ID</label>
-  <input type="text" name="newt_id">
-  <label>Newt-Secret</label>
-  <input type="password" name="newt_secret">
-  {% endif %}
+    <label>Docker-Image:Tag (bereits in die Registry gepusht)</label>
+    <input type="text" name="docker_image" placeholder="kundenname-website:20260101120000" value="{{ prefill_image }}" required>
 
-  <button type="submit" style="margin-top:1rem;">Go live</button>
-</form>
+    {% if pangolin_enabled %}
+    <p class="hint">Pangolin-Integration aktiv: Site/Tunnel wird automatisch angelegt. Fuer die Domain-Zuordnung eine bereits in Pangolin registrierte Basis-Domain waehlen und den gewuenschten Subdomain-Teil eintragen.</p>
+    <label>Basis-Domain (in Pangolin registriert)</label>
+    <select name="pangolin_domain_id">
+      <option value="">– keine Resource automatisch anlegen, nur Site/Tunnel –</option>
+      {% for d in domains %}
+      <option value="{{ d.domainId or d.id }}">{{ d.domain or d.baseDomain or d.domainId }}</option>
+      {% endfor %}
+    </select>
+    <label>Subdomain</label>
+    <input type="text" name="pangolin_subdomain" placeholder="kundenname">
+    {% else %}
+    <p class="hint">Pangolin-Integration nicht konfiguriert (PANGOLIN_API_URL/KEY/ORG_ID). Site/Tunnel zuerst manuell in Pangolins WebUI anlegen (Sites → Add Site → Type: Newt), dann die angezeigten Werte hier eintragen.</p>
+    <label>Newt-ID</label>
+    <input type="text" name="newt_id">
+    <label>Newt-Secret</label>
+    <input type="password" name="newt_secret">
+    {% endif %}
+
+    <div class="actions-row">
+      <button type="submit" class="btn btn-primary">Go live</button>
+    </div>
+  </form>
+</div>
 {% endblock %}

@@ -12,7 +12,9 @@ Seiten ("Go live"). Loest zwei Probleme der vorherigen Button-nur-Loesung:
    dedizierte Go-live-SSH-Key, Registry- und (optional) Pangolin-
    Zugangsdaten liegen nur noch hier, nicht mehr in jedem einzelnen
    Dev-Workspace. Der "Go live"-Button im Workspace pusht nur noch das
-   Image und ruft diese API auf (siehe Haupt-README, Abschnitt "Go live").
+   Image und verlinkt direkt auf das Formular hier - keinerlei
+   Admin-UI-Zugangsdaten im Workspace noetig (siehe Haupt-README,
+   Abschnitt "Go live").
 
 ## Architektur in Kuerze
 
@@ -39,9 +41,11 @@ Seiten ("Go live"). Loest zwei Probleme der vorherigen Button-nur-Loesung:
 2. `.env` anlegen:
    ```bash
    cp .env.example .env
-   # SECRET_KEY, ADMIN_UI_PASSWORD_HASH, ADMIN_UI_API_TOKEN erzeugen (Befehle
-   # stehen als Kommentar in .env.example), restliche Werte (Proxmox,
-   # Registry, optional Pangolin) eintragen.
+   # SECRET_KEY und ADMIN_UI_PASSWORD_HASH erzeugen (Befehle stehen als
+   # Kommentar in .env.example), restliche Werte (Proxmox, Registry,
+   # optional Pangolin) eintragen. ADMIN_UI_API_TOKEN nur setzen, falls du
+   # POST /api/sites programmatisch nutzen willst (z.B. aus einer CI-
+   # Pipeline) - der "Go live"-Button im Workspace braucht ihn nicht.
    ```
 3. Bauen und starten:
    ```bash

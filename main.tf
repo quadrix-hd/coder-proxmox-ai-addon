@@ -121,15 +121,8 @@ variable "golive_registry_password" {
 
 variable "golive_admin_ui_url" {
   type        = string
-  description = "URL der zentralen Go-live-Admin-UI (siehe admin-ui/README.md), die die eigentliche Provisionierung uebernimmt - z.B. http://10.0.75.1:9000. Nur relevant wenn golive_enabled=true."
+  description = "URL der zentralen Go-live-Admin-UI (siehe admin-ui/README.md), die die eigentliche Provisionierung uebernimmt - z.B. http://10.0.75.1:9000. Nur relevant wenn golive_enabled=true. Der Dev-Workspace braucht dafuer keinerlei Zugangsdaten mehr - der 'Go live'-Button pusht nur das Image und verlinkt dann auf die Admin-UI; dort (im Browser, mit eigenem Login) passiert alles Weitere."
   default     = ""
-}
-
-variable "golive_admin_ui_token" {
-  type        = string
-  sensitive   = true
-  default     = ""
-  description = "Bearer-Token fuer POST /api/sites an die Admin-UI (dasselbe wie deren ADMIN_UI_API_TOKEN). Nur relevant wenn golive_enabled=true."
 }
 
 # ---------------------------------------------------------
@@ -453,7 +446,7 @@ CLAUDEMD_EOF
     systemctl restart docker || true
     echo '${var.golive_registry_password}' | docker login ${var.golive_registry_url} -u '${var.golive_registry_user}' --password-stdin || true
 
-    echo '${base64encode(templatefile("${path.module}/scripts/go-live.sh.tftpl", { registry_url = var.golive_registry_url, admin_ui_url = var.golive_admin_ui_url, admin_ui_token = var.golive_admin_ui_token }))}' | base64 -d > /usr/local/bin/go-live.sh
+    echo '${base64encode(templatefile("${path.module}/scripts/go-live.sh.tftpl", { registry_url = var.golive_registry_url, admin_ui_url = var.golive_admin_ui_url, staging_name = "${data.coder_workspace_owner.me.name}-${data.coder_workspace.me.name}" }))}' | base64 -d > /usr/local/bin/go-live.sh
     chmod +x /usr/local/bin/go-live.sh
 %{endif~}
   EOT
@@ -599,17 +592,32 @@ resource "coder_app" "reboot" {
   command      = "sudo reboot"
 }
 
-# Interaktiver Terminal-Button, der /usr/local/bin/go-live.sh ausfuehrt
-# (geschrieben vom startup_script oben, nur wenn golive_enabled=true).
-# Fragt Site-Name/Domain/Newt-Credentials ab und stoesst den eigenstaendigen
-# go-live/-Terraform-Stack an. Siehe README, Abschnitt "Go live".
+# Terminal-Button, der /usr/local/bin/go-live.sh ausfuehrt (geschrieben vom
+# startup_script oben, nur wenn golive_enabled=true). Macht NUR den einen
+# Schritt, der zwingend im Workspace passieren muss (Demo-Image in die
+# Registry pushen, nicht-interaktiv, keine Eingaben) und verlinkt danach auf
+# die Admin-UI, wo Site-Name/Domain/Newt-Credentials in einem richtigen Formular
+# statt per Terminal-Prompt eingegeben werden. Siehe README, Abschnitt "Go live".
 resource "coder_app" "go_live" {
   count        = var.golive_enabled ? 1 : 0
   agent_id     = coder_agent.main.id
   slug         = "go-live"
-  display_name = "Go live"
+  display_name = "Go live (Image pushen)"
   icon         = "/emojis/1f680.png"
   command      = "bash /usr/local/bin/go-live.sh"
+}
+
+# Permanenter Button direkt zur Admin-UI (kein Terminal) - darueber laeuft
+# nach dem ersten Push alles Weitere: Status verfolgen, redeployen, Site
+# entfernen. Siehe admin-ui/README.md.
+resource "coder_app" "golive_dashboard" {
+  count        = var.golive_enabled && var.golive_admin_ui_url != "" ? 1 : 0
+  agent_id     = coder_agent.main.id
+  slug         = "go-live-dashboard"
+  display_name = "Site-Verwaltung"
+  icon         = "/emojis/1f4ca.png"
+  url          = var.golive_admin_ui_url
+  external     = true
 }
 
 resource "coder_app" "demo_site" {

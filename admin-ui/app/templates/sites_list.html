@@ -2,21 +2,31 @@
 {% block title %}Sites{% endblock %}
 {% block content %}
 <h1>Live Sites</h1>
+
+<div class="card" style="padding:0;">
 {% if not sites %}
-  <p class="hint">Noch keine Sites. Entweder hier auf "+ Neue Site" oder ueber den "Go live"-Button in einem Dev-Workspace.</p>
+  <div class="empty-state">
+    <p>Noch keine Sites.</p>
+    <p class="hint">Entweder hier oben auf "+ Neue Site", oder ueber den "Go live"-Button in einem Dev-Workspace.</p>
+  </div>
 {% else %}
 <table>
-  <tr><th>Site</th><th>Domain</th><th>Status</th><th>IP</th><th>Image</th><th>Erstellt</th></tr>
+  <thead>
+    <tr><th>Site</th><th>Domain</th><th>Status</th><th>IP</th><th>Image</th><th>Erstellt</th></tr>
+  </thead>
+  <tbody>
   {% for s in sites %}
   <tr>
-    <td><a href="{{ url_for('site_detail', site_name=s.site_name) }}">{{ s.site_name }}</a></td>
-    <td>{{ s.customer_domain or "-" }}</td>
-    <td><span class="status status-{{ s.status }}">{{ s.status }}</span></td>
-    <td>{{ s.production_ip or "-" }}</td>
-    <td>{{ s.docker_image }}</td>
-    <td>{{ s.created_at[:16] }}</td>
+    <td><a class="site-link" href="{{ url_for('site_detail', site_name=s.site_name) }}">{{ s.site_name }}</a></td>
+    <td>{{ s.customer_domain or "–" }}</td>
+    <td><span class="badge badge-{{ 'live' if s.status == 'live' else ('error' if s.status == 'error' else 'pending') }}">{{ s.status }}</span></td>
+    <td>{{ s.production_ip or "–" }}</td>
+    <td style="color:var(--text-muted);font-size:0.85rem;">{{ s.docker_image }}</td>
+    <td style="color:var(--text-muted);font-size:0.85rem;">{{ s.created_at[:16] }}</td>
   </tr>
   {% endfor %}
+  </tbody>
 </table>
 {% endif %}
+</div>
 {% endblock %}

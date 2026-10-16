@@ -2,37 +2,50 @@
 {% block title %}{{ site.site_name }}{% endblock %}
 {% block content %}
 <h1>{{ site.site_name }}</h1>
-<p><span class="status status-{{ site.status }}">{{ site.status }}</span>
+
+<div class="card">
+  <span class="badge badge-{{ 'live' if site.status == 'live' else ('error' if site.status == 'error' else 'pending') }}">{{ site.status }}</span>
   {% if site.status not in ("live", "error") %}
-  <span class="hint">(diese Seite neu laden, um den Fortschritt zu sehen)</span>
+  <span class="hint" style="display:inline;margin-left:0.5rem;">Provisionierung laeuft im Hintergrund - diese Seite neu laden, um den Fortschritt zu sehen.</span>
   {% endif %}
-</p>
 
-{% if site.last_error %}
-<div class="error"><strong>Letzter Fehler:</strong><pre>{{ site.last_error }}</pre></div>
-{% endif %}
+  {% if site.last_error %}
+  <div class="error" style="margin-top:1rem;">
+    <strong>Letzter Fehler:</strong>
+    <pre style="margin-top:0.5rem;">{{ site.last_error }}</pre>
+  </div>
+  {% endif %}
 
-<table>
-  <tr><th>Domain</th><td>{{ site.customer_domain or "-" }}</td></tr>
-  <tr><th>IP</th><td>{{ site.production_ip or "-" }}</td></tr>
-  <tr><th>Node</th><td>{{ site.target_node or "-" }}</td></tr>
-  <tr><th>Image</th><td>{{ site.docker_image }}</td></tr>
-  <tr><th>Pangolin-verwaltet</th><td>{{ "ja" if site.pangolin_managed else "nein (manuell angelegt)" }}</td></tr>
-  <tr><th>Erstellt</th><td>{{ site.created_at }}</td></tr>
-</table>
+  <dl class="detail-grid" style="margin-top:1.25rem;">
+    <dt>Domain</dt><dd>{{ site.customer_domain or "–" }}</dd>
+    <dt>IP</dt><dd>{{ site.production_ip or "–" }}</dd>
+    <dt>Node</dt><dd>{{ site.target_node or "–" }}</dd>
+    <dt>Image</dt><dd>{{ site.docker_image }}</dd>
+    <dt>Pangolin-verwaltet</dt><dd>{{ "ja" if site.pangolin_managed else "nein (manuell angelegt)" }}</dd>
+    <dt>Erstellt</dt><dd>{{ site.created_at }}</dd>
+  </dl>
+</div>
 
-<h2>Redeploy</h2>
-<p class="hint">Neuen Image-Tag in der Registry pushen, dann hier eintragen - zieht ihn per SSH auf die Produktions-LXC und startet den Container neu. Kein neuer terraform apply noetig.</p>
-<form method="post" action="{{ url_for('site_redeploy', site_name=site.site_name) }}">
-  <label>Neuer Image-Tag</label>
-  <input type="text" name="docker_image" placeholder="{{ site.site_name }}:20260101120000" required>
-  <button type="submit">Redeploy</button>
-</form>
+<div class="card">
+  <h2 style="margin-top:0;">Redeploy</h2>
+  <p class="hint">Neuen Image-Tag in der Registry pushen, dann hier eintragen - zieht ihn per SSH auf die Produktions-LXC und startet den Container neu. Kein neuer terraform apply noetig.</p>
+  <form method="post" action="{{ url_for('site_redeploy', site_name=site.site_name) }}">
+    <label>Neuer Image-Tag</label>
+    <input type="text" name="docker_image" placeholder="{{ site.site_name }}:20260101120000" required>
+    <div class="actions-row">
+      <button type="submit" class="btn btn-primary">Redeploy</button>
+    </div>
+  </form>
+</div>
 
-<h2>Site entfernen</h2>
-<p class="hint">Zerstoert die Produktions-LXC (terraform destroy) und, falls Pangolin-verwaltet, auch Site/Resource in Pangolin. Endgueltig.</p>
-<form method="post" action="{{ url_for('site_delete', site_name=site.site_name) }}"
-      onsubmit="return confirm('Site {{ site.site_name }} wirklich endgueltig entfernen?');">
-  <button type="submit">Site loeschen</button>
-</form>
+<div class="card">
+  <h2 style="margin-top:0;">Site entfernen</h2>
+  <p class="hint">Zerstoert die Produktions-LXC (terraform destroy) und, falls Pangolin-verwaltet, auch Site/Resource in Pangolin. Endgueltig.</p>
+  <form method="post" action="{{ url_for('site_delete', site_name=site.site_name) }}"
+        onsubmit="return confirm('Site {{ site.site_name }} wirklich endgueltig entfernen?');">
+    <div class="actions-row">
+      <button type="submit" class="btn btn-danger">Site loeschen</button>
+    </div>
+  </form>
+</div>
 {% endblock %}

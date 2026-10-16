@@ -40,11 +40,10 @@ pm_tls_insecure = "false"    # String-Literal; "true" nur falls kein Proxmox-Zer
 # (admin-ui/README.md), die die eigentliche Provisionierung uebernimmt.
 # Siehe README ("Optional: Go live") fuer den vollstaendigen Ablauf.
 #
-# golive_admin_ui_token muss exakt mit ADMIN_UI_API_TOKEN aus admin-ui/.env
-# uebereinstimmen.
+# Kein Token noetig - der Workspace ruft die Admin-UI-API nicht mehr direkt
+# auf, sondern pusht nur das Image und verlinkt auf die Admin-UI-Weboberflaeche.
 # golive_enabled         = "true"
 # golive_registry_url    = "10.0.75.1:5000"
 # golive_registry_user   = "golive"
 # golive_registry_password = "..."
 # golive_admin_ui_url    = "http://10.0.75.1:9000"
-# golive_admin_ui_token  = "..."

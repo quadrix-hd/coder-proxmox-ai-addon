@@ -2,36 +2,189 @@
 <html lang="de">
 <head>
   <meta charset="utf-8">
-  <title>{% block title %}Go live{% endblock %}</title>
+  <title>{% block title %}Go live{% endblock %} · Go live</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
-    body { font-family: system-ui, sans-serif; max-width: 960px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
-    h1 { font-size: 1.4rem; }
-    table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
-    th, td { text-align: left; padding: 0.5rem; border-bottom: 1px solid #ddd; }
-    .status { padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.85rem; }
-    .status-live { background: #d4f4dd; color: #1a7a33; }
-    .status-error { background: #fbd5d5; color: #a31515; }
-    .status-provisioning, .status-provisioning_lxc, .status-creating_pangolin_site,
-    .status-creating_pangolin_resource, .status-pending, .status-deleting { background: #fff3cd; color: #8a6400; }
-    form.inline { display: inline; }
-    input, button, select { font-size: 1rem; padding: 0.4rem; }
-    label { display: block; margin-top: 0.8rem; font-weight: 600; }
-    .error { background: #fbd5d5; color: #a31515; padding: 0.6rem; border-radius: 4px; margin: 1rem 0; }
-    .hint { color: #666; font-size: 0.85rem; }
-    nav { margin-bottom: 1.5rem; }
-    nav a { margin-right: 1rem; }
-    pre { background: #f5f5f5; padding: 0.8rem; overflow-x: auto; }
+    :root {
+      --bg: #f4f5f7;
+      --surface: #ffffff;
+      --border: #e3e5e9;
+      --text: #1a1d23;
+      --text-muted: #6b7280;
+      --accent: #4f46e5;
+      --accent-hover: #4338ca;
+      --accent-soft: #eef0fe;
+      --danger: #dc2626;
+      --danger-hover: #b91c1c;
+      --danger-soft: #fdecec;
+      --success: #15803d;
+      --success-soft: #e7f7ec;
+      --pending: #92720c;
+      --pending-soft: #fdf3d8;
+      --radius: 10px;
+      --shadow: 0 1px 2px rgba(16, 24, 40, .06), 0 1px 3px rgba(16, 24, 40, .08);
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      -webkit-font-smoothing: antialiased;
+    }
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    .header-inner {
+      max-width: 1040px;
+      margin: 0 auto;
+      padding: 0.9rem 1.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .brand {
+      font-weight: 700;
+      font-size: 1.05rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      color: var(--text);
+      text-decoration: none;
+    }
+    .brand .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); display: inline-block; }
+    nav.main-nav { display: flex; align-items: center; gap: 1.5rem; }
+    nav.main-nav a { color: var(--text-muted); text-decoration: none; font-size: 0.92rem; font-weight: 500; }
+    nav.main-nav a:hover { color: var(--text); }
+    main {
+      max-width: 1040px;
+      margin: 0 auto;
+      padding: 2rem 1.5rem 4rem;
+    }
+    h1 { font-size: 1.5rem; font-weight: 700; margin: 0 0 1.5rem; letter-spacing: -0.01em; }
+    h2 { font-size: 1.05rem; font-weight: 600; margin: 2rem 0 0.25rem; }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 1.5rem;
+    }
+    .card + .card { margin-top: 1.25rem; }
+    table { width: 100%; border-collapse: collapse; }
+    th {
+      text-align: left;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--text-muted);
+      font-weight: 600;
+      padding: 0 0.75rem 0.6rem;
+      border-bottom: 1px solid var(--border);
+    }
+    td { padding: 0.85rem 0.75rem; border-bottom: 1px solid var(--border); font-size: 0.92rem; vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    tbody tr:hover { background: #fafafc; }
+    td a.site-link { font-weight: 600; color: var(--text); text-decoration: none; }
+    td a.site-link:hover { color: var(--accent); }
+    .badge {
+      display: inline-block;
+      padding: 0.2rem 0.65rem;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .badge-live { background: var(--success-soft); color: var(--success); }
+    .badge-error { background: var(--danger-soft); color: var(--danger); }
+    .badge-pending { background: var(--pending-soft); color: var(--pending); }
+    label { display: block; font-size: 0.85rem; font-weight: 600; margin: 1.1rem 0 0.4rem; }
+    label:first-of-type { margin-top: 0; }
+    input[type=text], input[type=password], select {
+      width: 100%;
+      font-size: 0.95rem;
+      padding: 0.6rem 0.75rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface);
+      color: var(--text);
+      font-family: inherit;
+    }
+    input:focus, select:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-soft);
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.9rem;
+      font-weight: 600;
+      padding: 0.6rem 1.1rem;
+      border-radius: 8px;
+      border: 1px solid transparent;
+      cursor: pointer;
+      text-decoration: none;
+      font-family: inherit;
+    }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover { background: var(--accent-hover); }
+    .btn-danger { background: var(--danger); color: #fff; }
+    .btn-danger:hover { background: var(--danger-hover); }
+    .btn-secondary { background: var(--surface); color: var(--text); border-color: var(--border); }
+    .btn-secondary:hover { background: #f4f5f7; }
+    .error {
+      background: var(--danger-soft);
+      color: var(--danger);
+      padding: 0.8rem 1rem;
+      border-radius: 8px;
+      margin-bottom: 1.25rem;
+      font-size: 0.9rem;
+    }
+    .hint { color: var(--text-muted); font-size: 0.85rem; margin: 0.4rem 0 1rem; }
+    .empty-state { text-align: center; padding: 3rem 1rem; color: var(--text-muted); }
+    pre {
+      background: #1a1d23;
+      color: #e5e7eb;
+      padding: 1rem;
+      border-radius: 8px;
+      overflow-x: auto;
+      font-size: 0.82rem;
+      line-height: 1.5;
+    }
+    dl.detail-grid { display: grid; grid-template-columns: 160px 1fr; row-gap: 0.75rem; margin: 0; }
+    dl.detail-grid dt { color: var(--text-muted); font-size: 0.85rem; font-weight: 600; }
+    dl.detail-grid dd { margin: 0; font-size: 0.92rem; }
+    .actions-row { display: flex; gap: 0.75rem; margin-top: 1.25rem; }
+    @media (max-width: 640px) {
+      dl.detail-grid { grid-template-columns: 1fr; row-gap: 0.15rem; }
+      dl.detail-grid dt { margin-top: 0.6rem; }
+      table, thead, tbody, th, td, tr { display: block; }
+      thead { display: none; }
+      tbody tr { border-bottom: 1px solid var(--border); padding: 0.6rem 0; }
+      td { border: none; padding: 0.3rem 0.1rem; }
+    }
   </style>
 </head>
 <body>
-  <nav>
-    <a href="{{ url_for('sites_list') }}">Sites</a>
-    <a href="{{ url_for('site_new') }}">+ Neue Site</a>
-    <form class="inline" method="post" action="{{ url_for('logout') }}" style="float:right">
-      <button type="submit">Logout</button>
-    </form>
-  </nav>
-  {% block content %}{% endblock %}
+  <header>
+    <div class="header-inner">
+      <a class="brand" href="{{ url_for('sites_list') }}"><span class="dot"></span>Go live</a>
+      <nav class="main-nav">
+        <a href="{{ url_for('sites_list') }}">Sites</a>
+        <a href="{{ url_for('site_new') }}">+ Neue Site</a>
+        <form method="post" action="{{ url_for('logout') }}" style="display:inline">
+          <button type="submit" class="btn btn-secondary" style="padding:0.4rem 0.8rem;font-size:0.85rem;">Logout</button>
+        </form>
+      </nav>
+    </div>
+  </header>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
 </body>
 </html>

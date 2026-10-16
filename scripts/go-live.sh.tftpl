@@ -3,13 +3,13 @@ set -e
 
 REGISTRY_URL='${registry_url}'
 ADMIN_UI_URL='${admin_ui_url}'
-ADMIN_UI_TOKEN='${admin_ui_token}'
+STAGING_NAME_RAW='${staging_name}'
 
-echo "=== Go live ==="
+echo "=== Go live: Image pushen ==="
 echo
 
-if [ -z "$ADMIN_UI_URL" ] || [ -z "$ADMIN_UI_TOKEN" ]; then
-  echo "golive_admin_ui_url / golive_admin_ui_token sind nicht gesetzt (siehe README, Abschnitt 'Go live')." >&2
+if [ -z "$ADMIN_UI_URL" ]; then
+  echo "golive_admin_ui_url ist nicht gesetzt (siehe README, Abschnitt 'Go live')." >&2
   exit 1
 fi
 
@@ -21,37 +21,24 @@ fi
 echo "Gefundener Container: $CONTAINER"
 IMAGE=$(docker inspect --format '{{.Config.Image}}' "$CONTAINER")
 echo "Image: $IMAGE"
-echo
 
-read -rp "Kurzer, eindeutiger Site-Name (z.B. kundenname-website): " SITE_NAME
-read -rp "Kundendomain (z.B. kunde.example.com, nur Doku): " CUSTOMER_DOMAIN
+# Docker-Repo-Namen duerfen nur Kleinbuchstaben/Ziffern/[_.-] enthalten -
+# Workspace-/Owner-Namen sind das zwar bereits durch Coders eigene
+# Validierung, aber zur Sicherheit trotzdem normalisieren.
+STAGING_NAME=$(printf '%s' "$STAGING_NAME_RAW" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9_.-]/-/g')
+TAG="$STAGING_NAME:$(date +%Y%m%d%H%M%S)"
+REGISTRY_IMAGE="$REGISTRY_URL/$TAG"
 
-if [ -z "$SITE_NAME" ]; then
-  echo "Site-Name darf nicht leer sein, Abbruch." >&2
-  exit 1
-fi
+echo "Pushe als $REGISTRY_IMAGE ..."
+docker tag "$IMAGE" "$REGISTRY_IMAGE"
+docker push "$REGISTRY_IMAGE"
 
-TAG="$SITE_NAME:$(date +%Y%m%d%H%M%S)"
-
-echo "Pushe $IMAGE als $REGISTRY_URL/$TAG ..."
-docker tag "$IMAGE" "$REGISTRY_URL/$TAG"
-docker push "$REGISTRY_URL/$TAG"
-
-json_escape() {
-  printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
-}
+# Nur fuer die URL noetig - der eigentliche "docker push" oben nutzt $TAG
+# unveraendert, nur hier wird der Doppelpunkt vor dem Zeitstempel kodiert.
+TAG_FOR_URL=$(printf '%s' "$TAG" | sed 's/:/%3A/g')
 
 echo
-echo "Registriere bei der Go-live-Admin-UI ($ADMIN_UI_URL) ..."
-BODY=$(printf '{"site_name":"%s","customer_domain":"%s","docker_image":"%s"}' \
-  "$(json_escape "$SITE_NAME")" "$(json_escape "$CUSTOMER_DOMAIN")" "$(json_escape "$TAG")")
-
-RESPONSE=$(curl -fsS -X POST "$ADMIN_UI_URL/api/sites" \
-  -H "Authorization: Bearer $ADMIN_UI_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d "$BODY")
-
-echo "$RESPONSE"
+echo "Fertig. Site-Name, Kundendomain und (falls nicht automatisiert) die"
+echo "Pangolin-Newt-Zugangsdaten jetzt hier eintragen:"
 echo
-echo "Fortschritt verfolgen: $ADMIN_UI_URL/sites/$SITE_NAME"
-echo "(Provisionierung laeuft im Hintergrund in der Admin-UI, dauert typischerweise ein paar Minuten.)"
+echo "  $ADMIN_UI_URL/sites/new?image=$TAG_FOR_URL"

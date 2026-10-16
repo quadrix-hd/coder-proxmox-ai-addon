@@ -59,6 +59,7 @@ def create_app():
             pangolin_enabled=bool(pangolin),
             domains=domains,
             pangolin_error=pangolin_error,
+            prefill_image=request.args.get("image", ""),
         )
 
     @app.post("/sites/new")
@@ -74,7 +75,8 @@ def create_app():
 
         if db.site_exists(site_name):
             return render_template("site_new.html", error=f"'{site_name}' existiert schon.",
-                                    pangolin_enabled=bool(client_from_env(os.environ)), domains=[]), 400
+                                    pangolin_enabled=bool(client_from_env(os.environ)), domains=[],
+                                    prefill_image=docker_image), 400
 
         db.create_site(site_name, customer_domain, docker_image)
         _start_provisioning(site_name, customer_domain, docker_image, newt_id, newt_secret,
