@@ -170,115 +170,34 @@ data "coder_parameter" "instance_size" {
   }
 }
 
-data "coder_workspace_preset" "small_auto_node" {
-  # Default-Preset: setzt bewusst KEIN target_node, damit der dynamische
-  # Default von data.coder_parameter.target_node (der am wenigsten
-  # ausgelastete Knoten) tatsaechlich greift. Wer einen bestimmten Knoten
-  # erzwingen will, nutzt eines der expliziten *_pve/*_pve4-Presets unten.
-  name    = "Klein - 1 CPU / 1GB RAM - automatische Node-Auswahl (mit Rueckfragen)"
+# Nur noch 3 reine Groessen-Presets statt der frueheren 13 (Groesse x Node x
+# Automatik-Modus-Kombinatorik). Presets setzen bewusst NUR instance_size -
+# Node und Automatik-Modus bleiben eigene, direkt im Parameter-Formular
+# sichtbare Parameter (siehe target_node/skip_permissions unten) statt in
+# jeder denkbaren Kombination als eigenes Preset dupliziert zu werden.
+# Noetig bleiben die Presets trotzdem: der Tasks-Flow (KI-Prompt-Feld) zeigt
+# rohe coder_parameter-Werte gar nicht an (siehe README, "coder_parameter
+# vs. coder_workspace_preset") - ohne Presets gaebe es dort keine
+# Groessenauswahl mehr.
+data "coder_workspace_preset" "small" {
+  name    = "Klein - 1 CPU / 1GB RAM / 8GB Disk"
   default = true
   parameters = {
-    instance_size    = "small"
-    skip_permissions = "false"
+    instance_size = "small"
   }
 }
 
-data "coder_workspace_preset" "small_pve4" {
-  name = "Klein - 1 CPU / 1GB RAM - pve4 (mit Rueckfragen)"
+data "coder_workspace_preset" "medium" {
+  name = "Mittel - 2 CPU / 2GB RAM / 15GB Disk"
   parameters = {
-    instance_size    = "small"
-    skip_permissions = "false"
-    target_node      = "pve4"
+    instance_size = "medium"
   }
 }
 
-data "coder_workspace_preset" "small_auto_pve" {
-  name = "Klein - 1 CPU / 1GB RAM - pve (Automatik, ohne Rueckfragen)"
+data "coder_workspace_preset" "large" {
+  name = "Groß - 4 CPU / 4GB RAM / 20GB Disk"
   parameters = {
-    instance_size    = "small"
-    skip_permissions = "true"
-    target_node      = "pve"
-  }
-}
-
-data "coder_workspace_preset" "small_auto_pve4" {
-  name = "Klein - 1 CPU / 1GB RAM - pve4 (Automatik, ohne Rueckfragen)"
-  parameters = {
-    instance_size    = "small"
-    skip_permissions = "true"
-    target_node      = "pve4"
-  }
-}
-
-data "coder_workspace_preset" "medium_pve" {
-  name = "Mittel - 2 CPU / 2GB RAM - pve (mit Rueckfragen)"
-  parameters = {
-    instance_size    = "medium"
-    skip_permissions = "false"
-    target_node      = "pve"
-  }
-}
-
-data "coder_workspace_preset" "medium_pve4" {
-  name = "Mittel - 2 CPU / 2GB RAM - pve4 (mit Rueckfragen)"
-  parameters = {
-    instance_size    = "medium"
-    skip_permissions = "false"
-    target_node      = "pve4"
-  }
-}
-
-data "coder_workspace_preset" "medium_auto_pve" {
-  name = "Mittel - 2 CPU / 2GB RAM - pve (Automatik, ohne Rueckfragen)"
-  parameters = {
-    instance_size    = "medium"
-    skip_permissions = "true"
-    target_node      = "pve"
-  }
-}
-
-data "coder_workspace_preset" "medium_auto_pve4" {
-  name = "Mittel - 2 CPU / 2GB RAM - pve4 (Automatik, ohne Rueckfragen)"
-  parameters = {
-    instance_size    = "medium"
-    skip_permissions = "true"
-    target_node      = "pve4"
-  }
-}
-
-data "coder_workspace_preset" "large_pve" {
-  name = "Gross (Dev) - 4 CPU / 4GB RAM - pve (mit Rueckfragen)"
-  parameters = {
-    instance_size    = "large"
-    skip_permissions = "false"
-    target_node      = "pve"
-  }
-}
-
-data "coder_workspace_preset" "large_pve4" {
-  name = "Gross (Dev) - 4 CPU / 4GB RAM - pve4 (mit Rueckfragen)"
-  parameters = {
-    instance_size    = "large"
-    skip_permissions = "false"
-    target_node      = "pve4"
-  }
-}
-
-data "coder_workspace_preset" "large_auto_pve" {
-  name = "Gross (Dev) - 4 CPU / 4GB RAM - pve (Automatik, ohne Rueckfragen)"
-  parameters = {
-    instance_size    = "large"
-    skip_permissions = "true"
-    target_node      = "pve"
-  }
-}
-
-data "coder_workspace_preset" "large_auto_pve4" {
-  name = "Gross (Dev) - 4 CPU / 4GB RAM - pve4 (Automatik, ohne Rueckfragen)"
-  parameters = {
-    instance_size    = "large"
-    skip_permissions = "true"
-    target_node      = "pve4"
+    instance_size = "large"
   }
 }
 
@@ -323,10 +242,15 @@ locals {
 data "coder_parameter" "target_node" {
   name         = "target_node"
   display_name = "Proxmox-Node"
-  description  = "Auslastung wird live angezeigt (RAM-Nutzung), Liste wird automatisch aus dem Cluster ermittelt."
+  description  = "Standardmaessig automatisch der am wenigsten ausgelastete Knoten. Auslastung wird live angezeigt (RAM-Nutzung), Liste wird automatisch aus dem Cluster ermittelt."
   type         = "string"
-  default      = data.external.cluster_load.result.default_node
+  default      = "auto"
   mutable      = false
+
+  option {
+    name  = "Automatisch (geringste Auslastung)"
+    value = "auto"
+  }
 
   dynamic "option" {
     for_each = local.cluster_nodes
@@ -335,6 +259,13 @@ data "coder_parameter" "target_node" {
       value = option.value.name
     }
   }
+}
+
+locals {
+  # "auto" (Default/erste Option oben) loest sich hier auf den tatsaechlich
+  # am wenigsten ausgelasteten Knoten auf - ueberall unten statt
+  # data.coder_parameter.target_node.value direkt verwenden.
+  resolved_target_node = data.coder_parameter.target_node.value == "auto" ? data.external.cluster_load.result.default_node : data.coder_parameter.target_node.value
 }
 
 data "external" "free_ip" {
@@ -366,7 +297,7 @@ data "external" "free_ip_sdn" {
     token_id     = var.pm_api_token_id
     token_secret = var.pm_api_token_secret
     tls_insecure = var.pm_tls_insecure ? "true" : "false"
-    node         = data.coder_parameter.target_node.value
+    node         = local.resolved_target_node
     zone         = var.sdn_zone
     vnet         = var.sdn_vnet
   }
@@ -458,7 +389,7 @@ CLAUDEMD_EOF
 
 resource "proxmox_lxc" "workspace" {
   hostname     = "ws-${data.coder_workspace_owner.me.name}-${data.coder_workspace.me.name}"
-  target_node  = data.coder_parameter.target_node.value
+  target_node  = local.resolved_target_node
   ostemplate   = "local:vztmpl/ubuntu-ssh-ready.tar.zst"
   cores        = local.chosen.cores
   memory       = local.chosen.memory
@@ -537,7 +468,7 @@ resource "null_resource" "sdn_ip_release" {
     token_id     = var.pm_api_token_id
     token_secret = var.pm_api_token_secret
     tls_insecure = var.pm_tls_insecure ? "true" : "false"
-    node         = data.coder_parameter.target_node.value
+    node         = local.resolved_target_node
     zone         = var.sdn_zone
     vnet         = var.sdn_vnet
     ip           = data.external.free_ip_sdn[0].result.ip

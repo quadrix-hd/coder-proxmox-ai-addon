@@ -176,7 +176,7 @@ In `main.tf`, adjust these defaults to your environment:
 | `pm_api_url` | `variable "pm_api_url"` | Your Proxmox API URL, e.g. `https://192.168.1.10:8006/api2/json` |
 | `lxc_subnet`, `lxc_gateway`, `lxc_vlan_tag` | respective variables | Your network for the workspaces |
 
-If you have a Proxmox **cluster** and want to use node selection: the node dropdown is generated automatically from whatever `/nodes` returns — no per-node script edits needed. Only the `coder_workspace_preset` blocks in `main.tf` still hardcode `"pve"`/`"pve4"` as convenience shortcuts; update those (or add/remove presets) to match your real node names if you want preset-level node pinning.
+If you have a Proxmox **cluster** and want to use node selection: the node dropdown is generated automatically from whatever `/nodes` returns — no per-node script edits needed, and no preset edits either, since node choice is a plain parameter (`target_node`, with "Automatisch" as the default option), not baked into presets.
 
 ### 5.3 Install the Coder CLI and log in
 
@@ -232,7 +232,7 @@ Then add to the `coder` service's `volumes:` in your `docker-compose.yaml`:
 ### Creating a new workspace with a website
 
 1. Coder dashboard → **Tasks** → select the template
-2. Pick a preset (size + with/without confirmations + optionally node)
+2. Pick a size preset (Small/Medium/Large) — node and confirmation-mode stay on their defaults here (Tasks only shows presets, not the individual parameters; use "Create workspace" instead of Tasks if you need to change those up front)
 3. Enter a prompt, e.g.:
    > Build a modern landing page for [industry/topic]. Design the structure, content, and visuals yourself. Deploy with Docker (nginx:alpine), fixed port mapping -p 8080:80.
 4. Click Start
@@ -368,7 +368,7 @@ The automatic boot-time start of `agentapi` (the wrapper that embeds Claude Code
 Originally, `count = data.coder_workspace.me.start_count` destroyed the entire container on every stop and created a brand-new one on start. This is now fixed: `count` was removed, `start` only controls power state, and `lifecycle.ignore_changes` prevents unwanted recreation due to IP/template changes.
 
 **`coder_parameter` vs. `coder_workspace_preset`**
-The Tasks flow (AI prompt text field) doesn't display raw `coder_parameter` values (official Coder behavior). Size and mode selection therefore goes through `coder_workspace_preset` blocks (note: `data` block, not `resource`).
+The Tasks flow (AI prompt text field) doesn't display raw `coder_parameter` values (official Coder behavior) — only presets. Size selection therefore goes through three `coder_workspace_preset` blocks (note: `data` block, not `resource`), one per size, setting only `instance_size`. Node choice and confirmation-mode are deliberately *not* duplicated into presets (that used to be 13 presets covering every size × node × mode combination — confusing, and redundant with the parameters themselves) — they stay plain `coder_parameter`s with sensible defaults, visible and changeable in the regular "Create workspace" form.
 
 **Scripts talk to the Proxmox API, not to the network directly**
 `find_free_ip.sh` and `get_cluster_load.sh` both call the Proxmox REST API (with `jq` for JSON parsing) instead of doing ICMP pings or ad-hoc string parsing. `get_cluster_load.sh` returns every node in the cluster (not a hardcoded pair), so the node dropdown (`data.coder_parameter.target_node` in `main.tf`) is generated dynamically via a `dynamic "option"` block. `find_free_ip.sh` determines "used" IPs from the actual `net0`/`ipconfig0` config of every VM/LXC in the cluster rather than pinging — this also catches stopped containers, which don't respond to ping but still hold their IP. Note: this still isn't a fully atomic reservation between two simultaneous `terraform apply` runs; see "Known open issues" below.
