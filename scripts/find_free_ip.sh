@@ -1,6 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/lib_proxmox.sh"
+
 command -v jq >/dev/null 2>&1 || {
   echo "jq ist nicht installiert (siehe README, Abschnitt Prerequisites)" >&2
   exit 1
@@ -31,7 +34,7 @@ CURL_OPTS=(-s)
 # Fehler-Seite als "Erfolg" durchzureichen); die Guest-Liste wird in einer
 # normalen Variable statt einer Process-Substitution erfasst, damit ein
 # jq-Fehler (z.B. .data ist null) von "set -e" auch tatsaechlich erkannt wird.
-RESOURCES=$(curl "${CURL_OPTS[@]}" -f "${API_URL}/cluster/resources?type=vm" -H "$AUTH_HEADER")
+RESOURCES=$(curl_retry "${CURL_OPTS[@]}" -f "${API_URL}/cluster/resources?type=vm" -H "$AUTH_HEADER")
 
 if ! echo "$RESOURCES" | jq -e '.data | type == "array"' >/dev/null 2>&1; then
   echo "Unerwartete Antwort von ${API_URL}/cluster/resources: $RESOURCES" >&2
@@ -43,7 +46,7 @@ GUEST_LIST=$(echo "$RESOURCES" | jq -r '.data[] | select(.type=="lxc" or .type==
 USED_IPS=""
 while IFS=$'\t' read -r NODE VMID TYPE; do
   [ -z "$NODE" ] && continue
-  if ! CONFIG=$(curl "${CURL_OPTS[@]}" -f "${API_URL}/nodes/${NODE}/${TYPE}/${VMID}/config" -H "$AUTH_HEADER"); then
+  if ! CONFIG=$(curl_retry "${CURL_OPTS[@]}" -f "${API_URL}/nodes/${NODE}/${TYPE}/${VMID}/config" -H "$AUTH_HEADER"); then
     echo "Konnte Config von ${TYPE} ${VMID} auf Node ${NODE} nicht abrufen - breche ab statt mit unvollstaendigen Daten eine IP zu vergeben" >&2
     exit 1
   fi

@@ -1,0 +1,46 @@
+services:
+  admin-ui:
+    build:
+      context: ..
+      dockerfile: admin-ui/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+    environment:
+      SECRET_KEY: "${SECRET_KEY}"
+      ADMIN_UI_PASSWORD_HASH: "${ADMIN_UI_PASSWORD_HASH}"
+      ADMIN_UI_API_TOKEN: "${ADMIN_UI_API_TOKEN}"
+      ADMIN_UI_PUBLIC_URL: "${ADMIN_UI_PUBLIC_URL}"
+      ADMIN_UI_DB_PATH: /data/db/admin-ui.db
+
+      PM_API_URL: "${PM_API_URL}"
+      PM_API_TOKEN_ID: "${PM_API_TOKEN_ID}"
+      PM_API_TOKEN_SECRET: "${PM_API_TOKEN_SECRET}"
+      PM_TLS_INSECURE: "${PM_TLS_INSECURE:-false}"
+      TARGET_NODE: "${TARGET_NODE}"
+      LXC_SUBNET: "${LXC_SUBNET}"
+      LXC_GATEWAY: "${LXC_GATEWAY}"
+      LXC_VLAN_TAG: "${LXC_VLAN_TAG}"
+
+      REGISTRY_URL: "${REGISTRY_URL}"
+      REGISTRY_USER: "${REGISTRY_USER}"
+      REGISTRY_PASSWORD: "${REGISTRY_PASSWORD}"
+
+      # Alle drei leer lassen, um die Pangolin-Integration auszuschalten
+      # (Fallback: Newt-Site manuell in Pangolins WebUI anlegen, siehe README).
+      PANGOLIN_API_URL: "${PANGOLIN_API_URL:-}"
+      PANGOLIN_API_KEY: "${PANGOLIN_API_KEY:-}"
+      PANGOLIN_ORG_ID: "${PANGOLIN_ORG_ID:-}"
+      PANGOLIN_NEWT_ENDPOINT: "${PANGOLIN_NEWT_ENDPOINT:-}"
+    volumes:
+      - admin_ui_db:/data/db
+      - admin_ui_tfstate:/data/go-live/terraform.tfstate.d
+      - admin_ui_tfcache:/data/go-live/.terraform
+      # Dedizierter Go-live-SSH-Key, siehe README "One-time setup".
+      - ./ssh/golive_id_rsa:/data/ssh/golive_id_rsa:ro
+      - ./ssh/golive_id_rsa.pub:/data/ssh/golive_id_rsa.pub:ro
+
+volumes:
+  admin_ui_db:
+  admin_ui_tfstate:
+  admin_ui_tfcache:

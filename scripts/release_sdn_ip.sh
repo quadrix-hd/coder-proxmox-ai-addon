@@ -13,12 +13,15 @@ set -euo pipefail
 
 : "${API_URL:?}" "${TOKEN_ID:?}" "${TOKEN_SECRET:?}" "${NODE:?}" "${ZONE:?}" "${VNET:?}" "${IP:?}" "${MAC:?}"
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/lib_proxmox.sh"
+
 CURL_OPTS=(-s)
 [ "${TLS_INSECURE:-false}" = "true" ] && CURL_OPTS+=(-k)
 
 AUTH_HEADER="Authorization: PVEAPIToken=${TOKEN_ID}=${TOKEN_SECRET}"
 
-if ! curl "${CURL_OPTS[@]}" -X DELETE \
+if ! curl_retry "${CURL_OPTS[@]}" -X DELETE \
   "${API_URL}/nodes/${NODE}/network/sdn/ips" \
   -H "$AUTH_HEADER" \
   --data-urlencode "zone=${ZONE}" \

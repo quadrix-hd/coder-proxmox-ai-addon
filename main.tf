@@ -93,6 +93,39 @@ variable "sdn_vnet" {
 }
 
 # ---------------------------------------------------------
+# "Go live" (optional) - siehe README, Abschnitt "Go live"
+# ---------------------------------------------------------
+
+variable "golive_enabled" {
+  type        = bool
+  description = "Baut den 'Go live'-Button samt Vorbereitung (Registry-Login, Aufruf der zentralen admin-ui/) in jeden Dev-Workspace ein. Default false: nichts davon wird angefasst, bis explizit aktiviert."
+  default     = false
+}
+
+variable "golive_registry_url" {
+  type        = string
+  description = "Host:Port der privaten Docker-Registry fuer Go-live-Images, siehe registry/README.md. Nur relevant wenn golive_enabled=true."
+  default     = ""
+}
+
+variable "golive_registry_user" {
+  type    = string
+  default = ""
+}
+
+variable "golive_registry_password" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+
+variable "golive_admin_ui_url" {
+  type        = string
+  description = "URL der zentralen Go-live-Admin-UI (siehe admin-ui/README.md), die die eigentliche Provisionierung uebernimmt - z.B. http://10.0.75.1:9000. Nur relevant wenn golive_enabled=true. Der Dev-Workspace braucht dafuer keinerlei Zugangsdaten mehr - der 'Go live'-Button pusht nur das Image und verlinkt dann auf die Admin-UI; dort (im Browser, mit eigenem Login) passiert alles Weitere."
+  default     = ""
+}
+
+# ---------------------------------------------------------
 # Proxmox Provider
 # ---------------------------------------------------------
 
@@ -137,115 +170,34 @@ data "coder_parameter" "instance_size" {
   }
 }
 
-data "coder_workspace_preset" "small_auto_node" {
-  # Default-Preset: setzt bewusst KEIN target_node, damit der dynamische
-  # Default von data.coder_parameter.target_node (der am wenigsten
-  # ausgelastete Knoten) tatsaechlich greift. Wer einen bestimmten Knoten
-  # erzwingen will, nutzt eines der expliziten *_pve/*_pve4-Presets unten.
-  name    = "Klein - 1 CPU / 1GB RAM - automatische Node-Auswahl (mit Rueckfragen)"
+# Nur noch 3 reine Groessen-Presets statt der frueheren 13 (Groesse x Node x
+# Automatik-Modus-Kombinatorik). Presets setzen bewusst NUR instance_size -
+# Node und Automatik-Modus bleiben eigene, direkt im Parameter-Formular
+# sichtbare Parameter (siehe target_node/skip_permissions unten) statt in
+# jeder denkbaren Kombination als eigenes Preset dupliziert zu werden.
+# Noetig bleiben die Presets trotzdem: der Tasks-Flow (KI-Prompt-Feld) zeigt
+# rohe coder_parameter-Werte gar nicht an (siehe README, "coder_parameter
+# vs. coder_workspace_preset") - ohne Presets gaebe es dort keine
+# Groessenauswahl mehr.
+data "coder_workspace_preset" "small" {
+  name    = "Klein - 1 CPU / 1GB RAM / 8GB Disk"
   default = true
   parameters = {
-    instance_size    = "small"
-    skip_permissions = "false"
+    instance_size = "small"
   }
 }
 
-data "coder_workspace_preset" "small_pve4" {
-  name = "Klein - 1 CPU / 1GB RAM - pve4 (mit Rueckfragen)"
+data "coder_workspace_preset" "medium" {
+  name = "Mittel - 2 CPU / 2GB RAM / 15GB Disk"
   parameters = {
-    instance_size    = "small"
-    skip_permissions = "false"
-    target_node      = "pve4"
+    instance_size = "medium"
   }
 }
 
-data "coder_workspace_preset" "small_auto_pve" {
-  name = "Klein - 1 CPU / 1GB RAM - pve (Automatik, ohne Rueckfragen)"
+data "coder_workspace_preset" "large" {
+  name = "Groß - 4 CPU / 4GB RAM / 20GB Disk"
   parameters = {
-    instance_size    = "small"
-    skip_permissions = "true"
-    target_node      = "pve"
-  }
-}
-
-data "coder_workspace_preset" "small_auto_pve4" {
-  name = "Klein - 1 CPU / 1GB RAM - pve4 (Automatik, ohne Rueckfragen)"
-  parameters = {
-    instance_size    = "small"
-    skip_permissions = "true"
-    target_node      = "pve4"
-  }
-}
-
-data "coder_workspace_preset" "medium_pve" {
-  name = "Mittel - 2 CPU / 2GB RAM - pve (mit Rueckfragen)"
-  parameters = {
-    instance_size    = "medium"
-    skip_permissions = "false"
-    target_node      = "pve"
-  }
-}
-
-data "coder_workspace_preset" "medium_pve4" {
-  name = "Mittel - 2 CPU / 2GB RAM - pve4 (mit Rueckfragen)"
-  parameters = {
-    instance_size    = "medium"
-    skip_permissions = "false"
-    target_node      = "pve4"
-  }
-}
-
-data "coder_workspace_preset" "medium_auto_pve" {
-  name = "Mittel - 2 CPU / 2GB RAM - pve (Automatik, ohne Rueckfragen)"
-  parameters = {
-    instance_size    = "medium"
-    skip_permissions = "true"
-    target_node      = "pve"
-  }
-}
-
-data "coder_workspace_preset" "medium_auto_pve4" {
-  name = "Mittel - 2 CPU / 2GB RAM - pve4 (Automatik, ohne Rueckfragen)"
-  parameters = {
-    instance_size    = "medium"
-    skip_permissions = "true"
-    target_node      = "pve4"
-  }
-}
-
-data "coder_workspace_preset" "large_pve" {
-  name = "Gross (Dev) - 4 CPU / 4GB RAM - pve (mit Rueckfragen)"
-  parameters = {
-    instance_size    = "large"
-    skip_permissions = "false"
-    target_node      = "pve"
-  }
-}
-
-data "coder_workspace_preset" "large_pve4" {
-  name = "Gross (Dev) - 4 CPU / 4GB RAM - pve4 (mit Rueckfragen)"
-  parameters = {
-    instance_size    = "large"
-    skip_permissions = "false"
-    target_node      = "pve4"
-  }
-}
-
-data "coder_workspace_preset" "large_auto_pve" {
-  name = "Gross (Dev) - 4 CPU / 4GB RAM - pve (Automatik, ohne Rueckfragen)"
-  parameters = {
-    instance_size    = "large"
-    skip_permissions = "true"
-    target_node      = "pve"
-  }
-}
-
-data "coder_workspace_preset" "large_auto_pve4" {
-  name = "Gross (Dev) - 4 CPU / 4GB RAM - pve4 (Automatik, ohne Rueckfragen)"
-  parameters = {
-    instance_size    = "large"
-    skip_permissions = "true"
-    target_node      = "pve4"
+    instance_size = "large"
   }
 }
 
@@ -290,10 +242,15 @@ locals {
 data "coder_parameter" "target_node" {
   name         = "target_node"
   display_name = "Proxmox-Node"
-  description  = "Auslastung wird live angezeigt (RAM-Nutzung), Liste wird automatisch aus dem Cluster ermittelt."
+  description  = "Standardmaessig automatisch der am wenigsten ausgelastete Knoten. Auslastung wird live angezeigt (RAM-Nutzung), Liste wird automatisch aus dem Cluster ermittelt."
   type         = "string"
-  default      = data.external.cluster_load.result.default_node
+  default      = "auto"
   mutable      = false
+
+  option {
+    name  = "Automatisch (geringste Auslastung)"
+    value = "auto"
+  }
 
   dynamic "option" {
     for_each = local.cluster_nodes
@@ -302,6 +259,13 @@ data "coder_parameter" "target_node" {
       value = option.value.name
     }
   }
+}
+
+locals {
+  # "auto" (Default/erste Option oben) loest sich hier auf den tatsaechlich
+  # am wenigsten ausgelasteten Knoten auf - ueberall unten statt
+  # data.coder_parameter.target_node.value direkt verwenden.
+  resolved_target_node = data.coder_parameter.target_node.value == "auto" ? data.external.cluster_load.result.default_node : data.coder_parameter.target_node.value
 }
 
 data "external" "free_ip" {
@@ -333,7 +297,7 @@ data "external" "free_ip_sdn" {
     token_id     = var.pm_api_token_id
     token_secret = var.pm_api_token_secret
     tls_insecure = var.pm_tls_insecure ? "true" : "false"
-    node         = data.coder_parameter.target_node.value
+    node         = local.resolved_target_node
     zone         = var.sdn_zone
     vnet         = var.sdn_vnet
   }
@@ -343,6 +307,7 @@ locals {
   workspace_ip  = var.use_sdn_ipam ? data.external.free_ip_sdn[0].result.ip : data.external.free_ip[0].result.ip
   workspace_mac = var.use_sdn_ipam ? data.external.free_ip_sdn[0].result.mac : null
 }
+
 
 # ---------------------------------------------------------
 # Coder Agent (läuft im LXC)
@@ -381,6 +346,40 @@ resource "coder_agent" "main" {
       done
       rm -rf /tmp/skills-repo
     fi
+
+    # Port-8080-Konvention fuer den Demo-Button als globale Claude-Code-
+    # Anweisung hinterlegen, statt sich darauf zu verlassen, dass jeder
+    # Prompt es explizit erwaehnt (der Button ist fest auf localhost:8080
+    # verdrahtet - ohne diesen Port gibt's einen 502). Guard gegen
+    # doppeltes Anhaengen, falls das Skript durch "Restart=always" der
+    # coder-agent.service erneut laeuft.
+    mkdir -p /root/.claude
+    if ! grep -q "Deployment-Konvention fuer diesen Workspace" /root/.claude/CLAUDE.md 2>/dev/null; then
+      cat >> /root/.claude/CLAUDE.md <<'CLAUDEMD_EOF'
+
+## Deployment-Konvention fuer diesen Workspace
+Beim Deployen einer Web-App oder Demo-Seite mit Docker in diesem Workspace
+IMMER auf dem Host-Port 8080 veroeffentlichen (z.B. `docker run -p 8080:80 ...`),
+unabhaengig davon was im Auftrag steht. Der "Demo-Webseite"-Button in Coder ist
+fest auf http://localhost:8080 verdrahtet - ohne genau dieses Port-Mapping zeigt
+er einen 502-Fehler.
+CLAUDEMD_EOF
+    fi
+
+%{if var.golive_enabled~}
+    # "Go live": nur noch Registry-Login + das Button-Skript selbst - die
+    # eigentliche Provisionierung (Terraform, SSH-Key, Pangolin) laeuft
+    # zentral in admin-ui/ (siehe README, Abschnitt "Go live"), nicht mehr
+    # in diesem ephemeren, nicht-root Workspace-Container. Das ist auch der
+    # Grund, warum hier kein git clone/Terraform-Download mehr noetig ist.
+    mkdir -p /etc/docker
+    echo '{"insecure-registries":["${var.golive_registry_url}"]}' > /etc/docker/daemon.json
+    systemctl restart docker || true
+    echo '${var.golive_registry_password}' | docker login ${var.golive_registry_url} -u '${var.golive_registry_user}' --password-stdin || true
+
+    echo '${base64encode(templatefile("${path.module}/scripts/go-live.sh.tftpl", { registry_url = var.golive_registry_url, admin_ui_url = var.golive_admin_ui_url, staging_name = "${data.coder_workspace_owner.me.name}-${data.coder_workspace.me.name}" }))}' | base64 -d > /usr/local/bin/go-live.sh
+    chmod +x /usr/local/bin/go-live.sh
+%{endif~}
   EOT
 }
 
@@ -390,13 +389,18 @@ resource "coder_agent" "main" {
 
 resource "proxmox_lxc" "workspace" {
   hostname     = "ws-${data.coder_workspace_owner.me.name}-${data.coder_workspace.me.name}"
-  target_node  = data.coder_parameter.target_node.value
+  target_node  = local.resolved_target_node
   ostemplate   = "local:vztmpl/ubuntu-ssh-ready.tar.zst"
   cores        = local.chosen.cores
   memory       = local.chosen.memory
   swap         = local.chosen.swap
   unprivileged = true
   start        = data.coder_workspace.me.start_count == 1
+  # Ohne dieses Flag ueberlebt ein laufender Workspace keinen Proxmox-
+  # Host-Neustart: Proxmox startet beim Hochfahren nur Container mit
+  # onboot=1 automatisch wieder, alles andere bleibt gestoppt stehen,
+  # bis jemand es manuell (oder ueber Coder) wieder startet.
+  onboot = true
 
   lifecycle {
     ignore_changes = [network, ostemplate]
@@ -464,7 +468,7 @@ resource "null_resource" "sdn_ip_release" {
     token_id     = var.pm_api_token_id
     token_secret = var.pm_api_token_secret
     tls_insecure = var.pm_tls_insecure ? "true" : "false"
-    node         = data.coder_parameter.target_node.value
+    node         = local.resolved_target_node
     zone         = var.sdn_zone
     vnet         = var.sdn_vnet
     ip           = data.external.free_ip_sdn[0].result.ip
@@ -517,6 +521,34 @@ resource "coder_app" "reboot" {
   display_name = "Server neu starten"
   icon         = "/emojis/1f504.png"
   command      = "sudo reboot"
+}
+
+# Terminal-Button, der /usr/local/bin/go-live.sh ausfuehrt (geschrieben vom
+# startup_script oben, nur wenn golive_enabled=true). Macht NUR den einen
+# Schritt, der zwingend im Workspace passieren muss (Demo-Image in die
+# Registry pushen, nicht-interaktiv, keine Eingaben) und verlinkt danach auf
+# die Admin-UI, wo Site-Name/Domain/Newt-Credentials in einem richtigen Formular
+# statt per Terminal-Prompt eingegeben werden. Siehe README, Abschnitt "Go live".
+resource "coder_app" "go_live" {
+  count        = var.golive_enabled ? 1 : 0
+  agent_id     = coder_agent.main.id
+  slug         = "go-live"
+  display_name = "Go live (Image pushen)"
+  icon         = "/emojis/1f680.png"
+  command      = "bash /usr/local/bin/go-live.sh"
+}
+
+# Permanenter Button direkt zur Admin-UI (kein Terminal) - darueber laeuft
+# nach dem ersten Push alles Weitere: Status verfolgen, redeployen, Site
+# entfernen. Siehe admin-ui/README.md.
+resource "coder_app" "golive_dashboard" {
+  count        = var.golive_enabled && var.golive_admin_ui_url != "" ? 1 : 0
+  agent_id     = coder_agent.main.id
+  slug         = "go-live-dashboard"
+  display_name = "Site-Verwaltung"
+  icon         = "/emojis/1f4ca.png"
+  url          = var.golive_admin_ui_url
+  external     = true
 }
 
 resource "coder_app" "demo_site" {

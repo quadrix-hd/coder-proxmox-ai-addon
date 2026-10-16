@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <title>{% block title %}Go live{% endblock %} · Go live</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root {
+      --bg: #fafafa;
+      --surface: #ffffff;
+      --border: #eaeaea;
+      --border-strong: #d4d4d8;
+      --text: #171717;
+      --text-muted: #737373;
+      --text-faint: #a3a3a3;
+      --accent: #171717;
+      --accent-hover: #000000;
+      --danger: #e5484d;
+      --danger-bg: #fff0f0;
+      --danger-border: #ffd4d6;
+      --success-dot: #28c840;
+      --error-dot: #e5484d;
+      --pending-dot: #f5a623;
+      --radius: 8px;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      --sidebar-w: 220px;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+      background: var(--surface);
+      color: var(--text);
+      margin: 0;
+      -webkit-font-smoothing: antialiased;
+      display: flex;
+      min-height: 100vh;
+    }
+
+    /* --- Sidebar --- */
+    .sidebar {
+      width: var(--sidebar-w);
+      flex-shrink: 0;
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      padding: 1.25rem 1rem;
+      background: var(--bg);
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-weight: 600;
+      font-size: 0.95rem;
+      color: var(--text);
+      text-decoration: none;
+      padding: 0.3rem 0.5rem 1.5rem;
+    }
+    .brand .logo {
+      width: 22px; height: 22px; border-radius: 6px;
+      background: var(--accent);
+      color: #fff;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 0.75rem; font-weight: 700;
+    }
+    nav.sidebar-nav { display: flex; flex-direction: column; gap: 0.1rem; }
+    nav.sidebar-nav a {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.875rem;
+      font-weight: 500;
+      padding: 0.45rem 0.6rem;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      gap: 0.55rem;
+    }
+    nav.sidebar-nav a:hover { background: var(--border); color: var(--text); }
+    nav.sidebar-nav a.active { background: var(--surface); color: var(--text); border: 1px solid var(--border); font-weight: 600; }
+    .sidebar-footer { margin-top: auto; padding-top: 1rem; border-top: 1px solid var(--border); }
+    .sidebar-footer form button {
+      width: 100%;
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      font-size: 0.82rem;
+      font-weight: 500;
+      padding: 0.45rem 0.6rem;
+      border-radius: 6px;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .sidebar-footer form button:hover { background: var(--border); color: var(--text); }
+
+    /* --- Main --- */
+    .main-wrap { flex: 1; min-width: 0; }
+    main {
+      max-width: 880px;
+      margin: 0 auto;
+      padding: 2.5rem 2rem 4rem;
+    }
+    h1 { font-size: 1.3rem; font-weight: 600; margin: 0 0 0.3rem; letter-spacing: -0.01em; }
+    .page-sub { color: var(--text-muted); font-size: 0.88rem; margin: 0 0 1.75rem; }
+    h2 { font-size: 0.95rem; font-weight: 600; margin: 0 0 0.9rem; }
+    .section { padding: 1.75rem 0; border-top: 1px solid var(--border); }
+    .section:first-child { border-top: none; padding-top: 0; }
+
+    table { width: 100%; border-collapse: collapse; }
+    th {
+      text-align: left;
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-faint);
+      font-weight: 600;
+      padding: 0 0.6rem 0.65rem;
+      border-bottom: 1px solid var(--border);
+    }
+    td { padding: 0.8rem 0.6rem; border-bottom: 1px solid var(--border); font-size: 0.875rem; vertical-align: middle; }
+    tbody tr:last-child td { border-bottom: none; }
+    tbody tr:hover { background: var(--bg); }
+    td a.site-link { font-weight: 500; color: var(--text); text-decoration: none; }
+    td a.site-link:hover { text-decoration: underline; }
+    .mono { font-family: var(--mono); font-size: 0.82rem; color: var(--text-muted); }
+
+    .status { display: inline-flex; align-items: center; gap: 0.45rem; font-size: 0.85rem; font-weight: 500; }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .status-dot.live { background: var(--success-dot); }
+    .status-dot.error { background: var(--error-dot); }
+    .status-dot.pending { background: var(--pending-dot); box-shadow: 0 0 0 3px rgba(245,166,35,.18); }
+
+    label { display: block; font-size: 0.82rem; font-weight: 600; margin: 1.1rem 0 0.4rem; color: var(--text); }
+    label:first-of-type { margin-top: 0; }
+    input[type=text], input[type=password], select {
+      width: 100%;
+      font-size: 0.9rem;
+      padding: 0.55rem 0.7rem;
+      border: 1px solid var(--border-strong);
+      border-radius: 6px;
+      background: var(--surface);
+      color: var(--text);
+      font-family: inherit;
+    }
+    input:focus, select:focus {
+      outline: none;
+      border-color: var(--text);
+      box-shadow: 0 0 0 3px rgba(0,0,0,.06);
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.85rem;
+      font-weight: 500;
+      padding: 0.5rem 0.95rem;
+      border-radius: 6px;
+      border: 1px solid transparent;
+      cursor: pointer;
+      text-decoration: none;
+      font-family: inherit;
+    }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover { background: var(--accent-hover); }
+    .btn-danger { background: var(--surface); color: var(--danger); border-color: var(--danger-border); }
+    .btn-danger:hover { background: var(--danger-bg); }
+    .btn-secondary { background: var(--surface); color: var(--text); border-color: var(--border-strong); }
+    .btn-secondary:hover { background: var(--bg); }
+
+    .error {
+      background: var(--danger-bg);
+      border: 1px solid var(--danger-border);
+      color: var(--danger);
+      padding: 0.7rem 0.9rem;
+      border-radius: 6px;
+      margin-bottom: 1.25rem;
+      font-size: 0.85rem;
+    }
+    .hint { color: var(--text-muted); font-size: 0.82rem; margin: 0.4rem 0 1rem; line-height: 1.45; }
+    .empty-state { text-align: center; padding: 3.5rem 1rem; color: var(--text-muted); font-size: 0.9rem; }
+    pre {
+      background: #0a0a0a;
+      color: #e5e5e5;
+      padding: 1rem;
+      border-radius: 6px;
+      overflow-x: auto;
+      font-size: 0.78rem;
+      line-height: 1.55;
+      font-family: var(--mono);
+    }
+    dl.detail-grid { display: grid; grid-template-columns: 140px 1fr; row-gap: 0.7rem; margin: 0; }
+    dl.detail-grid dt { color: var(--text-muted); font-size: 0.82rem; }
+    dl.detail-grid dd { margin: 0; font-size: 0.875rem; }
+    .actions-row { display: flex; gap: 0.6rem; margin-top: 1.25rem; }
+
+    @media (max-width: 760px) {
+      body { flex-direction: column; }
+      .sidebar { width: 100%; flex-direction: row; align-items: center; padding: 0.75rem 1rem; border-right: none; border-bottom: 1px solid var(--border); }
+      .brand { padding: 0; }
+      nav.sidebar-nav { flex-direction: row; margin-left: 1rem; }
+      .sidebar-footer { margin-top: 0; margin-left: auto; padding-top: 0; border-top: none; }
+      main { padding: 1.5rem 1.25rem 3rem; }
+      dl.detail-grid { grid-template-columns: 1fr; row-gap: 0.15rem; }
+      dl.detail-grid dt { margin-top: 0.6rem; }
+      table, thead, tbody, th, td, tr { display: block; }
+      thead { display: none; }
+      tbody tr { border-bottom: 1px solid var(--border); padding: 0.6rem 0; }
+      td { border: none; padding: 0.3rem 0.1rem; }
+    }
+  </style>
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="{{ url_for('sites_list') }}"><span class="logo">GL</span>Go live</a>
+    <nav class="sidebar-nav">
+      <a href="{{ url_for('sites_list') }}" class="{{ 'active' if request.endpoint == 'sites_list' else '' }}">Sites</a>
+      <a href="{{ url_for('site_new') }}" class="{{ 'active' if request.endpoint == 'site_new' else '' }}">+ Neue Site</a>
+    </nav>
+    <div class="sidebar-footer">
+      <form method="post" action="{{ url_for('logout') }}">
+        <button type="submit">Logout</button>
+      </form>
+    </div>
+  </aside>
+  <div class="main-wrap">
+    <main>
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+</body>
+</html>

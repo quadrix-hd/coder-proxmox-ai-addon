@@ -1,0 +1,44 @@
+#!/bin/bash
+set -e
+
+REGISTRY_URL='${registry_url}'
+ADMIN_UI_URL='${admin_ui_url}'
+STAGING_NAME_RAW='${staging_name}'
+
+echo "=== Go live: Image pushen ==="
+echo
+
+if [ -z "$ADMIN_UI_URL" ]; then
+  echo "golive_admin_ui_url ist nicht gesetzt (siehe README, Abschnitt 'Go live')." >&2
+  exit 1
+fi
+
+CONTAINER=$(docker ps --filter "publish=8080" --format '{{.Names}}' | head -n1)
+if [ -z "$CONTAINER" ]; then
+  echo "Kein laufender Container auf Port 8080 gefunden. Erst die Seite deployen (fixed port mapping -p 8080:80), dann nochmal versuchen." >&2
+  exit 1
+fi
+echo "Gefundener Container: $CONTAINER"
+IMAGE=$(docker inspect --format '{{.Config.Image}}' "$CONTAINER")
+echo "Image: $IMAGE"
+
+# Docker-Repo-Namen duerfen nur Kleinbuchstaben/Ziffern/[_.-] enthalten -
+# Workspace-/Owner-Namen sind das zwar bereits durch Coders eigene
+# Validierung, aber zur Sicherheit trotzdem normalisieren.
+STAGING_NAME=$(printf '%s' "$STAGING_NAME_RAW" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9_.-]/-/g')
+TAG="$STAGING_NAME:$(date +%Y%m%d%H%M%S)"
+REGISTRY_IMAGE="$REGISTRY_URL/$TAG"
+
+echo "Pushe als $REGISTRY_IMAGE ..."
+docker tag "$IMAGE" "$REGISTRY_IMAGE"
+docker push "$REGISTRY_IMAGE"
+
+# Nur fuer die URL noetig - der eigentliche "docker push" oben nutzt $TAG
+# unveraendert, nur hier wird der Doppelpunkt vor dem Zeitstempel kodiert.
+TAG_FOR_URL=$(printf '%s' "$TAG" | sed 's/:/%3A/g')
+
+echo
+echo "Fertig. Site-Name, Kundendomain und (falls nicht automatisiert) die"
+echo "Pangolin-Newt-Zugangsdaten jetzt hier eintragen:"
+echo
+echo "  $ADMIN_UI_URL/sites/new?image=$TAG_FOR_URL"

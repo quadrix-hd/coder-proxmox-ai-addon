@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <title>Login · Go live</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root {
+      --bg: #fafafa;
+      --surface: #ffffff;
+      --border: #eaeaea;
+      --border-strong: #d4d4d8;
+      --text: #171717;
+      --text-muted: #737373;
+      --accent: #171717;
+      --accent-hover: #000000;
+      --danger: #e5484d;
+      --danger-bg: #fff0f0;
+      --danger-border: #ffd4d6;
+      --radius: 8px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      -webkit-font-smoothing: antialiased;
+    }
+    .login-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 2.25rem;
+      width: 100%;
+      max-width: 340px;
+    }
+    .brand { display: flex; align-items: center; gap: 0.6rem; font-weight: 600; font-size: 1rem; margin-bottom: 1.75rem; }
+    .brand .logo {
+      width: 26px; height: 26px; border-radius: 7px;
+      background: var(--accent); color: #fff;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 0.78rem; font-weight: 700;
+    }
+    .error {
+      background: var(--danger-bg);
+      border: 1px solid var(--danger-border);
+      color: var(--danger);
+      padding: 0.65rem 0.85rem;
+      border-radius: 6px;
+      margin-bottom: 1.1rem;
+      font-size: 0.85rem;
+    }
+    label { display: block; font-size: 0.82rem; font-weight: 600; margin-bottom: 0.4rem; }
+    input[type=password] {
+      width: 100%;
+      font-size: 0.9rem;
+      padding: 0.6rem 0.75rem;
+      border: 1px solid var(--border-strong);
+      border-radius: 6px;
+      font-family: inherit;
+    }
+    input[type=password]:focus { outline: none; border-color: var(--text); box-shadow: 0 0 0 3px rgba(0,0,0,.06); }
+    button {
+      width: 100%;
+      margin-top: 1.1rem;
+      font-size: 0.9rem;
+      font-weight: 500;
+      padding: 0.65rem;
+      border-radius: 6px;
+      border: none;
+      background: var(--accent);
+      color: #fff;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    button:hover { background: var(--accent-hover); }
+  </style>
+</head>
+<body>
+  <div class="login-card">
+    <div class="brand"><span class="logo">GL</span>Go live</div>
+    {% if error %}<div class="error">{{ error }}</div>{% endif %}
+    <form method="post">
+      <label for="password">Passwort</label>
+      <input type="password" id="password" name="password" autofocus required>
+      <button type="submit">Anmelden</button>
+    </form>
+  </div>
+</body>
+</html>

@@ -3,3 +3,9 @@
 *.tfstate
 *.tfstate.backup
 *.tfvars
+
+# admin-ui: secrets, local SSH key, dev DB - never committed
+admin-ui/.env
+admin-ui/ssh/
+admin-ui/data/
+admin-ui/*.db

@@ -174,10 +174,9 @@ In `main.tf`, adjust these defaults to your environment:
 | Variable | Where | What |
 |---|---|---|
 | `pm_api_url` | `variable "pm_api_url"` | Your Proxmox API URL, e.g. `https://192.168.1.10:8006/api2/json` |
-| `target_node` | `variable "target_node"` | Your Proxmox node name |
 | `lxc_subnet`, `lxc_gateway`, `lxc_vlan_tag` | respective variables | Your network for the workspaces |
 
-If you have a Proxmox **cluster** and want to use node selection: the node dropdown is generated automatically from whatever `/nodes` returns — no per-node script edits needed. Only the `coder_workspace_preset` blocks in `main.tf` still hardcode `"pve"`/`"pve4"` as convenience shortcuts; update those (or add/remove presets) to match your real node names if you want preset-level node pinning.
+If you have a Proxmox **cluster** and want to use node selection: the node dropdown is generated automatically from whatever `/nodes` returns — no per-node script edits needed, and no preset edits either, since node choice is a plain parameter (`target_node`, with "Automatisch" as the default option), not baked into presets.
 
 ### 5.3 Install the Coder CLI and log in
 
@@ -189,6 +188,8 @@ coder login https://your-coder-url.com
 ### 5.4 Push the template
 
 Put your secrets in a **`terraform.tfvars`** file in the template directory (exactly that name — it's already excluded via `.gitignore`'s `*.tfvars` pattern) instead of passing them inline — inline `--variable` values land in your shell history. Terraform auto-loads this file, no extra flag needed. Don't use `coder templates push`'s own `--variables-file` flag for this: in practice it does **not** reliably accept a plain HCL tfvars file (it goes through a separate, stricter parser used for the "workspace tags" feature and tends to error out) — `terraform.tfvars` auto-loading is the mechanism that actually works.
+
+A commented template with every variable is in [`terraform.tfvars.example`](terraform.tfvars.example) — copy it (`cp terraform.tfvars.example terraform.tfvars`) and fill in your real values instead of retyping everything from scratch.
 
 ```hcl
 # terraform.tfvars — never commit this file
@@ -231,7 +232,7 @@ Then add to the `coder` service's `volumes:` in your `docker-compose.yaml`:
 ### Creating a new workspace with a website
 
 1. Coder dashboard → **Tasks** → select the template
-2. Pick a preset (size + with/without confirmations + optionally node)
+2. Pick a size preset (Small/Medium/Large) — node and confirmation-mode stay on their defaults here (Tasks only shows presets, not the individual parameters; use "Create workspace" instead of Tasks if you need to change those up front)
 3. Enter a prompt, e.g.:
    > Build a modern landing page for [industry/topic]. Design the structure, content, and visuals yourself. Deploy with Docker (nginx:alpine), fixed port mapping -p 8080:80.
 4. Click Start
@@ -245,6 +246,13 @@ The demo button expects the website on **port 8080** (`localhost:8080` inside th
 - **Stop/Restart**: via the Coder UI — the container is preserved, no data loss
 - **Delete permanently**: delete via the Coder UI (not just stop), otherwise the Proxmox container remains
 - **Do not** check "Orphan"/"Skip resource cleanup" if that option appears when deleting
+
+### Preventing forgotten workspaces from piling up
+
+Nothing in this template stops a workspace automatically — a forgotten one just sits there running, using RAM/CPU on your Proxmox node(s) indefinitely. This matters more once more than one person can create workspaces (e.g. multiple OIDC users/groups): an inactivity-based TTL means stale workspaces free themselves up instead of quietly accumulating. Coder has built-in support for this independent of this template's Terraform code:
+
+- **Per-workspace**: workspace owners can set a "Scheduled shutdown" from the workspace's own settings in the Coder UI.
+- **Template-wide default**: check **Templates → `lxc-claude-task` → Settings → Schedule** in the Coder dashboard (exact wording depends on your Coder version), or `coder templates push --help` for a default-TTL-style flag your installed version supports. Setting a sane default there (e.g. auto-stop after 8h idle) means someone forgetting to stop a workspace doesn't silently eat cluster resources forever.
 
 ---
 
@@ -283,17 +291,69 @@ coder templates push lxc-claude-task -d .
 
 ---
 
+## Optional: Go live (managed hosting — promote a site to permanent production)
+
+For a managed-offering setup where customers never touch Coder themselves (your team builds sites in dev workspaces, customers only give design input): a "Go live" button that takes the site currently running in a dev workspace and deploys it to a **permanent, Coder-independent** production LXC, reachable under the customer's own domain via [Pangolin](https://pangolin.net) (tunneled reverse proxy — the production LXC needs no public IP or inbound firewall rule).
+
+This is a genuinely separate piece of infrastructure from the rest of this template, not just a Terraform variable. Three moving parts:
+
+- **`registry/`** — a self-hosted private Docker registry (plain `registry:2`) that dev workspaces push finished images to, and production LXCs pull from. See [`registry/README.md`](registry/README.md).
+- **`admin-ui/`** — a small, **dauerhaft laufende** (always-on, not per-workspace) web app that owns all the credentials this needs (Proxmox API token, the dedicated go-live SSH key, registry credentials, optionally a Pangolin API key) and does the actual provisioning. Lists every live customer site, lets you redeploy a new image or tear a site down **at any time** through the browser, instead of SSHing in by hand. See [`admin-ui/README.md`](admin-ui/README.md) for setup.
+- **`go-live/`** — the Terraform stack that actually creates the production LXC (unchanged in shape, now called by `admin-ui/` instead of from inside a dev workspace — see below for why, and [`go-live/README.md`](go-live/README.md) for details).
+- **Two `coder_app` buttons** inside the dev workspace (only when `golive_enabled = true`): **"Go live (Image pushen)"** runs one short, non-interactive terminal command that pushes the running demo container's image to the registry, then prints a link into the admin-ui's "new site" form with the image already filled in. **"Site-Verwaltung"** opens the admin-ui directly in a new tab (no terminal at all) — everything else (site name, domain, Newt credentials, status, redeploys, deletion) happens there, in a proper web form instead of terminal prompts.
+
+**Why centralize into `admin-ui/` instead of running everything from the dev workspace button (the original design)?** Two reasons, found the hard way while building and testing this:
+1. **Credentials stayed scattered.** Every dev workspace needed its own copy of the Proxmox token, SSH key and registry/Pangolin credentials just to run the button once. Centralizing them into one long-lived service shrinks the blast radius of a single compromised workspace to "can ask the admin-ui to create a site" rather than "holds the keys to production directly."
+2. **No persistent state, no way to change anything later.** The old design ran `terraform apply` fresh inside an ephemeral, non-root dev-workspace container on every click, with no state kept afterwards — updating or removing a live site meant manual SSH (see git history of `go-live/README.md`). `admin-ui/` keeps one persistent Terraform state per site (via `terraform workspace`), so redeploying a new image or tearing a site down is now an ordinary, idempotent action in the UI.
+
+**What's automated vs. manual, and why:** server provisioning, deployment and redeploys are fully automated. Pangolin domain registration (the customer-facing tunnel/routing) can *optionally* be automated too, via Pangolin's own Integration API — see `admin-ui/README.md`'s "Pangolin-Integration" section for exactly what's verified and what isn't (short version: the API shape is reconstructed from documentation search snippets, not confirmed against a live Pangolin instance — test it against one throwaway site before trusting it for a real customer). Without that configured, it falls back to the original fully-manual flow: create the Newt site by hand in Pangolin's UI, paste the Newt ID/secret into the admin-ui's "new site" form. A brand-new customer **apex domain** needs a one-time manual "Add Domain" + DNS verification step in Pangolin either way — that's inherent to proving domain ownership, not something any amount of automation here can skip.
+
+### One-time setup
+
+1. Set up the registry (`registry/README.md`) and note its URL.
+2. Set up the admin-ui (`admin-ui/README.md`) — this is where the dedicated go-live SSH key, Proxmox credentials, and (optionally) Pangolin API key now live. Note its URL and the `ADMIN_UI_API_TOKEN` you generate for it.
+3. Add to your `terraform.tfvars`:
+   ```hcl
+   golive_enabled            = "true"
+   golive_registry_url       = "10.0.75.1:5000"
+   golive_registry_user      = "golive"
+   golive_registry_password  = "..."
+   golive_admin_ui_url       = "http://10.0.75.1:9000"
+   ```
+   (No bearer token needed here — the workspace doesn't call the admin-ui's API directly anymore, see below.)
+4. `coder templates push lxc-claude-task -d .` — every dev workspace created from here on gets both "Go live" buttons.
+
+### Per-customer flow
+
+1. Build and verify the site in a dev workspace as usual (port 8080 convention, demo button).
+2. Click **"Go live (Image pushen)"** in the workspace. It finds the demo container, pushes its image to the registry under a unique tag, and prints a link — no prompts, nothing else to type here.
+3. Click that link (or the **"Site-Verwaltung"** button, which is always there): it opens the admin-ui's "new site" form with the image already filled in. Enter the site name and customer domain, and (if Pangolin integration isn't configured) the Newt ID/secret from Pangolin's UI, then submit.
+4. Watch the site's status on its detail page — it provisions the production LXC in the background (a couple of minutes). If Pangolin integration is configured, the tunnel/domain binding happens automatically too; otherwise follow the manual Pangolin steps described in `admin-ui/README.md`.
+5. For any later change (new image version, taking the site down): do it from the admin-ui's site detail page (reachable any time via the **"Site-Verwaltung"** button), not by SSHing into the production LXC by hand.
+
+### Security note
+
+Dev workspaces no longer carry live Proxmox/SSH/registry credentials, nor even a token for the admin-ui — the push script needs only registry push access, and the admin-ui's web UI has its own separate login. The admin-ui itself holds the real credentials and should be reachable only from your internal network (see `admin-ui/README.md`).
+
+---
+
 ## Template structure
 
 ```
 .
 ├── main.tf                       Main template
 ├── watchdog.sh.tftpl              Keeps Claude Code/agentapi running reliably
-└── scripts/
-    ├── find_free_ip.sh            Default IP assignment, backed by the Proxmox API (not ping)
-    ├── get_cluster_load.sh        Live load display for multi-node selection, any cluster size
-    ├── allocate_sdn_ip.sh         Optional: atomic IP allocation via Proxmox SDN + IPAM
-    └── release_sdn_ip.sh          Optional: releases the SDN+IPAM reservation on workspace destroy
+├── terraform.tfvars.example       Commented template for your terraform.tfvars
+├── scripts/
+│   ├── lib_proxmox.sh             Shared curl-with-retry helper, sourced by the scripts below
+│   ├── find_free_ip.sh            Default IP assignment, backed by the Proxmox API (not ping)
+│   ├── get_cluster_load.sh        Live load display for multi-node selection, any cluster size
+│   ├── allocate_sdn_ip.sh         Optional: atomic IP allocation via Proxmox SDN + IPAM
+│   ├── release_sdn_ip.sh          Optional: releases the SDN+IPAM reservation on workspace destroy
+│   └── go-live.sh.tftpl           Optional: the "Go live" button's script (pushes image, calls admin-ui), templated into each workspace
+├── registry/                      Optional: self-hosted private Docker registry for "Go live" images
+├── go-live/                       Optional: Terraform stack that provisions production LXCs, called by admin-ui/
+└── admin-ui/                      Optional: always-on web app that manages live "Go live" sites
 ```
 
 ### Key design decisions
@@ -308,13 +368,22 @@ The automatic boot-time start of `agentapi` (the wrapper that embeds Claude Code
 Originally, `count = data.coder_workspace.me.start_count` destroyed the entire container on every stop and created a brand-new one on start. This is now fixed: `count` was removed, `start` only controls power state, and `lifecycle.ignore_changes` prevents unwanted recreation due to IP/template changes.
 
 **`coder_parameter` vs. `coder_workspace_preset`**
-The Tasks flow (AI prompt text field) doesn't display raw `coder_parameter` values (official Coder behavior). Size and mode selection therefore goes through `coder_workspace_preset` blocks (note: `data` block, not `resource`).
+The Tasks flow (AI prompt text field) doesn't display raw `coder_parameter` values (official Coder behavior) — only presets. Size selection therefore goes through three `coder_workspace_preset` blocks (note: `data` block, not `resource`), one per size, setting only `instance_size`. Node choice and confirmation-mode are deliberately *not* duplicated into presets (that used to be 13 presets covering every size × node × mode combination — confusing, and redundant with the parameters themselves) — they stay plain `coder_parameter`s with sensible defaults, visible and changeable in the regular "Create workspace" form.
 
 **Scripts talk to the Proxmox API, not to the network directly**
 `find_free_ip.sh` and `get_cluster_load.sh` both call the Proxmox REST API (with `jq` for JSON parsing) instead of doing ICMP pings or ad-hoc string parsing. `get_cluster_load.sh` returns every node in the cluster (not a hardcoded pair), so the node dropdown (`data.coder_parameter.target_node` in `main.tf`) is generated dynamically via a `dynamic "option"` block. `find_free_ip.sh` determines "used" IPs from the actual `net0`/`ipconfig0` config of every VM/LXC in the cluster rather than pinging — this also catches stopped containers, which don't respond to ping but still hold their IP. Note: this still isn't a fully atomic reservation between two simultaneous `terraform apply` runs; see "Known open issues" below.
 
 **Secrets live in one file on the workspace, not scattered across several**
 The Coder agent token and the Claude OAuth token are written once to `/etc/coder-agent.env` (`chmod 600`, root-only) inside the LXC, and both the `coder-agent` systemd service (via `EnvironmentFile=`) and the watchdog script source that same file — instead of each having their own copy of the secrets on disk.
+
+**`onboot = true` on the LXC**
+Without it, a Proxmox **host** reboot leaves every workspace container stopped — Proxmox only auto-starts containers flagged `onboot` when the host comes back up, independent of whatever Coder's database thinks the workspace's last state was. This is unrelated to Coder's own stop/start handling (`start = data.coder_workspace.me.start_count == 1`), which only controls what happens on a Terraform apply, not on a bare-metal reboot.
+
+**`curl_retry` (`scripts/lib_proxmox.sh`) instead of a bare `curl`**
+Terraform re-evaluates `data "external"` sources on *every* apply — including a plain start/stop of a workspace that already exists, not just on creation. That means `find_free_ip.sh`/`get_cluster_load.sh`/`allocate_sdn_ip.sh` hit the Proxmox API on every single workspace action. A brief connection hiccup (e.g. the few seconds right after a Proxmox host or service restart, while the API is still coming up) would otherwise fail the whole apply and block starting *any* workspace, even ones that need no new IP. `curl_retry` retries with exponential backoff, but only on genuine connection-level failures (DNS/connect/timeout/TLS/empty-reply) — a real HTTP error (wrong credentials, permissions) still fails immediately rather than retrying a request that would fail the same way five times in a row.
+
+**Port-8080 convention enforced via a global `CLAUDE.md`, not just prompt wording**
+The demo button is hardcoded to `http://localhost:8080`. Relying on every prompt explicitly saying "fixed port mapping -p 8080:80" is fragile — forget it once and you get a 502. The agent's startup script now drops that instruction into `/root/.claude/CLAUDE.md`, which Claude Code reads as standing context regardless of what a given prompt says.
 
 ---
 
@@ -323,6 +392,8 @@ The Coder agent token and the Claude OAuth token are written once to `/etc/coder
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | SSH timeout during creation | Network/switch delay on first boot | Wait, optionally increase the timeout in the template |
+| Workspaces don't come back after a Proxmox **host** reboot | Containers need `onboot=1` to auto-start when Proxmox itself boots — already set in this template (`onboot = true`), but if you're on an older pushed template version this fix predates, push again | `coder templates push lxc-claude-task -d .` to pick up the current template, then re-create or manually `pct start` any workspace that was created under the old version |
+| Starting *any* existing workspace fails right after restarting Proxmox/its services | The Proxmox API can take a few seconds to come back up fully; `data "external"` sources (IP/node lookups) re-run on every apply and would fail if the API isn't ready yet | Should self-resolve now (`curl_retry` retries connection failures with backoff) — if it still fails after that, the outage outlasted the retry window; just try the start again a bit later |
 | `agentapi` 502 in web UI | Watchdog hasn't kicked in yet | Wait 1–2 min, cron runs every minute |
 | Claude asks to log in | OAuth token missing/wrong | Check `/etc/coder-agent.env` inside the LXC (`cat /etc/coder-agent.env`) |
 | "Invalid host header" | `AGENTAPI_ALLOWED_HOSTS` missing | Set in the watchdog script, verify it |
@@ -334,6 +405,9 @@ The Coder agent token and the Claude OAuth token are written once to `/etc/coder
 | `terraform plan`/`push` fails with a TLS error against Proxmox | `pm_tls_insecure` is now `false` by default | Import the Proxmox certificate (see "1.3 Trust the Proxmox certificate"), or explicitly pass `pm_tls_insecure=true` if you accept the risk |
 | `allocate_sdn_ip.sh` fails with "sdn_zone/sdn_vnet sind nicht gesetzt" | `use_sdn_ipam=true` without `sdn_zone`/`sdn_vnet` | Pass both variables (see "Optional: SDN + IPAM") |
 | `allocate_sdn_ip.sh` fails with a 5xx that isn't "IP already exist" | Zone/VNet/Subnet not set up correctly, or the token lacks `SDN.Allocate` permission | Check **Datacenter → SDN** is applied, and that the API token's role includes `SDN.Allocate` on `/sdn/zones/<zone>/<vnet>` |
+| "Go live" button fails with "golive_admin_ui_url ist nicht gesetzt" | That `terraform.tfvars` value is missing or empty | Set `golive_admin_ui_url` (see "Optional: Go live" → step 3) and push the template again |
+| The link printed by "Go live (Image pushen)" doesn't open / "Site-Verwaltung" button doesn't load | Workspace's browser session can't reach `golive_admin_ui_url` over the network, or the admin-ui container isn't running | Check the admin-ui is up (`docker compose ps` in `admin-ui/`) and reachable from wherever you open Coder's web UI in a browser (not just from the Proxmox LXC subnet) |
+| A site's status stays stuck on `provisioning_lxc` / shows an error | Check `last_error` on the site's detail page in the admin-ui, and `docker compose logs -f admin-ui` for the full terraform output | Fix the underlying issue (same debugging as any terraform apply against this repo), then redeploy/retry from the UI |
 
 ---
 
@@ -343,7 +417,11 @@ The Coder agent token and the Claude OAuth token are written once to `/etc/coder
 - **Watchdog doesn't detect a missing Claude installation**: if the initial install fails entirely (e.g. network error), the watchdog currently only checks whether `agentapi` is running — not whether `claude` itself is installed. Manual reinstallation is required in that case (see Troubleshooting)
 - **No live failover for running workspaces**: node selection only applies at creation time. A running workspace is never automatically migrated to another node, even if its node becomes heavily loaded
 - **IP allocation is atomic only if you opt into SDN+IPAM**: by default, `find_free_ip.sh` reads the actually-configured IPs from every VM/LXC via the Proxmox API instead of pinging, which is far more reliable than ping, but two `terraform apply` runs racing at the exact same moment could in theory still pick the same "free" IP. Setting `use_sdn_ipam = true` (see "Optional: SDN + IPAM" above) closes this gap using Proxmox's own IPAM locking — but it's opt-in, not the default, since it needs a one-time SDN setup on the Proxmox side first. Note: the `telmate/proxmox` provider pinned here can't read back a container's IP when `network.ip = "dhcp"` ([open upstream issue](https://github.com/Telmate/terraform-provider-proxmox/issues/1453)), which is why even the SDN path pre-allocates the IP via the IPAM API and assigns it statically, rather than letting the container DHCP it at boot.
-- **Planned, not yet built**: a "Go live" button that exports a finished workspace into a permanent, Coder-independent production container
+- **Pangolin API automation in `admin-ui/` is unverified against a live instance**: `admin-ui/app/pangolin_client.py` automates Site/Resource/Target creation via Pangolin's Integration API, but the endpoint paths/request/response shapes are reconstructed from documentation search snippets (direct access to `docs.pangolin.net` is DNS-blocked from this repo's development sandbox) plus a third-party reference tool, not from reading the actual Swagger spec. See the big comment at the top of that file and `admin-ui/README.md`'s "Pangolin-Integration" section before relying on it for a real customer — test against one throwaway site first, and diff against `<your-pangolin-url>/v1/docs`. Leaving `PANGOLIN_API_URL`/`KEY`/`ORG_ID` unset falls back to the original fully-manual Pangolin flow.
+- **`go-live/`'s Newt container env vars are unverified against a live Pangolin instance**: `docker run ... -e PANGOLIN_ENDPOINT=... -e NEWT_ID=... -e NEWT_SECRET=... fosrl/newt` in `go-live/main.tf` is based on documented Newt configuration conventions, but this repo's development environment couldn't reach `docs.pangolin.net`/the Newt GitHub repo to confirm the exact env var names for the version you're running. Double-check against [github.com/fosrl/newt](https://github.com/fosrl/newt) before your first real "Go live" — if the names differ, the container will just fail to connect (visible immediately as "Offline" in Pangolin's Sites list), not silently misbehave.
+- **admin-ui serializes all terraform runs through one lock**: `provision_site`/`teardown_site` run in a background Python thread per request, but all actual `terraform` invocations go through a single lock (`app/terraform_runner.py`) to prevent two simultaneous "Go live" clicks from racing on the shared `go-live/` working directory's selected-workspace state. Correct, but means a second click waits for the first site's apply to finish rather than running in parallel — fine for the "handful of customer sites, one admin clicking at a time" scale this was built for; worth revisiting (a real job queue, one working directory per site) if usage grows.
+- **One shared, static SSH key for every workspace, forever**: `proxmox_lxc.workspace.ssh_public_keys` uses the same key (`~/.ssh/coder-ssh-key` on the Coder host) for every workspace it has ever created. If that key leaks, every existing *and future* workspace is reachable as root until someone manually rotates it everywhere. There's no per-workspace key, no expiry, no rotation story. Low risk for a single trusted operator; a real gap the moment more than one person can trigger workspace creation.
+- **`use_sdn_ipam=true` claims a fresh IP on every workspace start/stop, not just on creation**: Terraform re-evaluates `data "external"` sources on every apply, including a plain restart of an already-existing workspace. `allocate_sdn_ip.sh` has no way to know "this workspace already has an IP, don't claim a new one" — each restart burns one more IP in the configured range, orphaned in Proxmox's IPAM (the actual container keeps its original IP, since `network` is in `ignore_changes`, but the spurious claim still sits in **Datacenter → SDN → IPAM**). Over enough start/stop cycles, this can exhaust the configured range even though far fewer workspaces are actually running. Not a problem for the default (non-SDN) path, which only *reads* state and never claims anything. Until this is fixed, periodically check **Datacenter → SDN → IPAM** for stale entries if you have `use_sdn_ipam` on, or just don't enable it in a workspace mix with frequent restarts yet.
 
 ---
 

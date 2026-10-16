@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Neue Site{% endblock %}
+{% block content %}
+<h1>Neue Site</h1>
+<p class="page-sub">Legt eine neue Kunden-Site an und stoesst die Provisionierung an.</p>
+
+{% if error %}<div class="error">{{ error }}</div>{% endif %}
+{% if pangolin_error %}<div class="error">Pangolin-API-Fehler beim Laden der Domains: {{ pangolin_error }}</div>{% endif %}
+{% if prefill_image %}<p class="hint" style="margin-top:-0.75rem;">Image aus dem "Go live"-Push im Workspace bereits eingetragen - Site-Name und Domain hier festlegen.</p>{% endif %}
+
+<form method="post">
+  <div class="section">
+    <h2>Grunddaten</h2>
+    <label>Site-Name (kurz, eindeutig, z.B. kundenname-website)</label>
+    <input type="text" name="site_name" pattern="[a-z0-9-]+" required autofocus>
+
+    <label>Kundendomain (nur Doku, falls Pangolin nicht automatisiert ist)</label>
+    <input type="text" name="customer_domain" placeholder="kunde.example.com">
+
+    <label>Docker-Image:Tag (bereits in die Registry gepusht)</label>
+    <input type="text" name="docker_image" placeholder="kundenname-website:20260101120000" value="{{ prefill_image }}" required>
+  </div>
+
+  <div class="section">
+    <h2>Pangolin</h2>
+    {% if pangolin_enabled %}
+    <p class="hint">Pangolin-Integration aktiv: Site/Tunnel wird automatisch angelegt. Fuer die Domain-Zuordnung eine bereits in Pangolin registrierte Basis-Domain waehlen und den gewuenschten Subdomain-Teil eintragen.</p>
+    <label>Basis-Domain (in Pangolin registriert)</label>
+    <select name="pangolin_domain_id">
+      <option value="">– keine Resource automatisch anlegen, nur Site/Tunnel –</option>
+      {% for d in domains %}
+      <option value="{{ d.domainId or d.id }}">{{ d.domain or d.baseDomain or d.domainId }}</option>
+      {% endfor %}
+    </select>
+    <label>Subdomain</label>
+    <input type="text" name="pangolin_subdomain" placeholder="kundenname">
+    {% else %}
+    <p class="hint">Pangolin-Integration nicht konfiguriert (PANGOLIN_API_URL/KEY/ORG_ID). Site/Tunnel zuerst manuell in Pangolins WebUI anlegen (Sites → Add Site → Type: Newt), dann die angezeigten Werte hier eintragen.</p>
+    <label>Newt-ID</label>
+    <input type="text" name="newt_id">
+    <label>Newt-Secret</label>
+    <input type="password" name="newt_secret">
+    {% endif %}
+  </div>
+
+  <div class="actions-row">
+    <button type="submit" class="btn btn-primary">Go live</button>
+  </div>
+</form>
+{% endblock %}
