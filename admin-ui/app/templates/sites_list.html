@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Sites{% endblock %}
 {% block content %}
-<h1>Live Sites</h1>
+<h1>Sites</h1>
+<p class="page-sub">Alle live Kunden-Seiten.</p>
 
-<div class="card" style="padding:0;">
 {% if not sites %}
   <div class="empty-state">
     <p>Noch keine Sites.</p>
@@ -16,17 +16,17 @@
   </thead>
   <tbody>
   {% for s in sites %}
+  {% set st = 'live' if s.status == 'live' else ('error' if s.status == 'error' else 'pending') %}
   <tr>
     <td><a class="site-link" href="{{ url_for('site_detail', site_name=s.site_name) }}">{{ s.site_name }}</a></td>
     <td>{{ s.customer_domain or "–" }}</td>
-    <td><span class="badge badge-{{ 'live' if s.status == 'live' else ('error' if s.status == 'error' else 'pending') }}">{{ s.status }}</span></td>
-    <td>{{ s.production_ip or "–" }}</td>
-    <td style="color:var(--text-muted);font-size:0.85rem;">{{ s.docker_image }}</td>
-    <td style="color:var(--text-muted);font-size:0.85rem;">{{ s.created_at[:16] }}</td>
+    <td><span class="status"><span class="status-dot {{ st }}"></span>{{ s.status }}</span></td>
+    <td class="mono">{{ s.production_ip or "–" }}</td>
+    <td class="mono">{{ s.docker_image }}</td>
+    <td class="mono">{{ s.created_at[:16] }}</td>
   </tr>
   {% endfor %}
   </tbody>
 </table>
 {% endif %}
-</div>
 {% endblock %}

@@ -1,33 +1,31 @@
 {% extends "base.html" %}
 {% block title %}{{ site.site_name }}{% endblock %}
 {% block content %}
+{% set st = 'live' if site.status == 'live' else ('error' if site.status == 'error' else 'pending') %}
 <h1>{{ site.site_name }}</h1>
+<p class="page-sub"><span class="status"><span class="status-dot {{ st }}"></span>{{ site.status }}</span>{% if site.status not in ("live", "error") %} — Provisionierung laeuft im Hintergrund, Seite neu laden fuer den Fortschritt{% endif %}</p>
 
-<div class="card">
-  <span class="badge badge-{{ 'live' if site.status == 'live' else ('error' if site.status == 'error' else 'pending') }}">{{ site.status }}</span>
-  {% if site.status not in ("live", "error") %}
-  <span class="hint" style="display:inline;margin-left:0.5rem;">Provisionierung laeuft im Hintergrund - diese Seite neu laden, um den Fortschritt zu sehen.</span>
-  {% endif %}
+{% if site.last_error %}
+<div class="error">
+  <strong>Letzter Fehler:</strong>
+  <pre style="margin-top:0.5rem;">{{ site.last_error }}</pre>
+</div>
+{% endif %}
 
-  {% if site.last_error %}
-  <div class="error" style="margin-top:1rem;">
-    <strong>Letzter Fehler:</strong>
-    <pre style="margin-top:0.5rem;">{{ site.last_error }}</pre>
-  </div>
-  {% endif %}
-
-  <dl class="detail-grid" style="margin-top:1.25rem;">
+<div class="section">
+  <h2>Übersicht</h2>
+  <dl class="detail-grid">
     <dt>Domain</dt><dd>{{ site.customer_domain or "–" }}</dd>
-    <dt>IP</dt><dd>{{ site.production_ip or "–" }}</dd>
+    <dt>IP</dt><dd class="mono">{{ site.production_ip or "–" }}</dd>
     <dt>Node</dt><dd>{{ site.target_node or "–" }}</dd>
-    <dt>Image</dt><dd>{{ site.docker_image }}</dd>
+    <dt>Image</dt><dd class="mono">{{ site.docker_image }}</dd>
     <dt>Pangolin-verwaltet</dt><dd>{{ "ja" if site.pangolin_managed else "nein (manuell angelegt)" }}</dd>
-    <dt>Erstellt</dt><dd>{{ site.created_at }}</dd>
+    <dt>Erstellt</dt><dd class="mono">{{ site.created_at }}</dd>
   </dl>
 </div>
 
-<div class="card">
-  <h2 style="margin-top:0;">Redeploy</h2>
+<div class="section">
+  <h2>Redeploy</h2>
   <p class="hint">Neuen Image-Tag in der Registry pushen, dann hier eintragen - zieht ihn per SSH auf die Produktions-LXC und startet den Container neu. Kein neuer terraform apply noetig.</p>
   <form method="post" action="{{ url_for('site_redeploy', site_name=site.site_name) }}">
     <label>Neuer Image-Tag</label>
@@ -38,13 +36,13 @@
   </form>
 </div>
 
-<div class="card">
-  <h2 style="margin-top:0;">Site entfernen</h2>
+<div class="section">
+  <h2>Site entfernen</h2>
   <p class="hint">Zerstoert die Produktions-LXC (terraform destroy) und, falls Pangolin-verwaltet, auch Site/Resource in Pangolin. Endgueltig.</p>
   <form method="post" action="{{ url_for('site_delete', site_name=site.site_name) }}"
         onsubmit="return confirm('Site {{ site.site_name }} wirklich endgueltig entfernen?');">
     <div class="actions-row">
-      <button type="submit" class="btn btn-danger">Site loeschen</button>
+      <button type="submit" class="btn btn-danger">Site löschen</button>
     </div>
   </form>
 </div>
