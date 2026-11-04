@@ -19,6 +19,12 @@ lxc_subnet   = "10.0.75"
 lxc_gateway  = "10.0.75.1"
 lxc_vlan_tag = "75"          # String-Literal, siehe Hinweis oben
 
+# Optional, aber deutlich schnellere Workspace-Erstellung: vorgebautes
+# Template mit Docker + Claude Code (scripts/build_golden_template.sh, siehe
+# README "Optional: Faster workspace creation").
+# lxc_template      = "local:vztmpl/ubuntu-golden.tar.zst"
+# prebaked_template = "true"   # String-Literal, siehe Hinweis oben
+
 pm_tls_insecure = "false"    # String-Literal; "true" nur falls kein Proxmox-Zertifikat importiert werden kann
 
 # Optional: privates Skills-Repo, das in jeden Workspace unter

@@ -256,6 +256,32 @@ Nothing in this template stops a workspace automatically — a forgotten one jus
 
 ---
 
+## Optional: Faster workspace creation (pre-baked template)
+
+By default every new workspace installs Docker (`get.docker.com`) and Claude Code from the internet on first boot — usually the slowest part of creating a workspace, and the reason the workspace shows "no connection" for a while. `scripts/build_golden_template.sh` builds an LXC template with both already installed, once:
+
+```bash
+# on a Proxmox node, as root (copy the script over first)
+NET_IP=10.0.75.250/24 NET_GW=10.0.75.1 VLAN_TAG=75 ./build_golden_template.sh
+```
+
+(Use a free IP in your workspace subnet, or omit `NET_IP`/`NET_GW` if that VLAN has DHCP. The build container is deleted again afterwards.) The result is `local:vztmpl/ubuntu-golden.tar.zst`. `local` storage is per node, so **copy it to every node** workspaces can land on:
+
+```bash
+scp /var/lib/vz/template/cache/ubuntu-golden.tar.zst root@pve4:/var/lib/vz/template/cache/
+```
+
+Then in `terraform.tfvars`:
+
+```hcl
+lxc_template      = "local:vztmpl/ubuntu-golden.tar.zst"
+prebaked_template = "true"
+```
+
+and push the template. Existing workspaces are untouched (`ostemplate` is in `ignore_changes`). Rebuild the template every few weeks to pick up Docker/Claude Code updates — Claude Code also updates itself in running workspaces.
+
+---
+
 ## Optional: SDN + IPAM (atomic IP allocation)
 
 By default (`use_sdn_ipam = false`), IP allocation works the way described above: `find_free_ip.sh` reads the IPs actually configured on every VM/LXC via the Proxmox API and picks the first one that's free. That's reliable, but not fully atomic — two `terraform apply` runs racing at the exact same moment could in theory still pick the same IP (see "Known open issues").
@@ -350,6 +376,7 @@ Dev workspaces no longer carry live Proxmox/SSH/registry credentials, nor even a
 │   ├── get_cluster_load.sh        Live load display for multi-node selection, any cluster size
 │   ├── allocate_sdn_ip.sh         Optional: atomic IP allocation via Proxmox SDN + IPAM
 │   ├── release_sdn_ip.sh          Optional: releases the SDN+IPAM reservation on workspace destroy
+│   ├── build_golden_template.sh   Optional: builds an LXC template with Docker + Claude Code pre-installed (run on a Proxmox node)
 │   └── go-live.sh.tftpl           Optional: the "Go live" button's script (pushes image, calls admin-ui), templated into each workspace
 ├── registry/                      Optional: self-hosted private Docker registry for "Go live" images
 ├── go-live/                       Optional: Terraform stack that provisions production LXCs, called by admin-ui/

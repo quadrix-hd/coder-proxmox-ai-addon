@@ -69,6 +69,18 @@ variable "lxc_gateway" {
   default = "10.0.75.1"
 }
 
+variable "lxc_template" {
+  type        = string
+  description = "LXC-Template (Proxmox-Volume-ID), aus dem jeder Workspace erstellt wird. Muss auf JEDEM Node liegen, auf dem Workspaces landen koennen (local:vztmpl ist node-lokal)."
+  default     = "local:vztmpl/ubuntu-ssh-ready.tar.zst"
+}
+
+variable "prebaked_template" {
+  type        = bool
+  description = "true, wenn lxc_template mit scripts/build_golden_template.sh gebaut wurde (Docker + Claude Code schon drin). Dann wird Claude Code beim Workspace-Start nicht erneut installiert."
+  default     = false
+}
+
 variable "lxc_vlan_tag" {
   type    = number
   default = 75
@@ -406,7 +418,7 @@ CLAUDEMD_EOF
 resource "proxmox_lxc" "workspace" {
   hostname     = "ws-${data.coder_workspace_owner.me.name}-${data.coder_workspace.me.name}"
   target_node  = local.resolved_target_node
-  ostemplate   = "local:vztmpl/ubuntu-ssh-ready.tar.zst"
+  ostemplate   = var.lxc_template
   cores        = local.chosen.cores
   memory       = local.chosen.memory
   swap         = local.chosen.swap
@@ -452,7 +464,9 @@ resource "proxmox_lxc" "workspace" {
 
   provisioner "remote-exec" {
     inline = [
-      "apt-get update && apt-get install -y curl sudo",
+      # Mit vorgebautem Template sind curl/sudo schon da - dann kein
+      # apt-get update im kritischen Pfad, bevor der Agent ueberhaupt laeuft.
+      "command -v curl >/dev/null && command -v sudo >/dev/null || (apt-get update && apt-get install -y curl sudo)",
       "useradd -m -s /bin/bash coder || true",
       "mkdir -p /opt/coder",
       "echo '${base64encode(coder_agent.main.init_script)}' | base64 -d > /opt/coder/init.sh",
@@ -525,6 +539,9 @@ module "claude-code" {
   ai_prompt                    = data.coder_task.me.prompt
   model                        = "sonnet"
   dangerously_skip_permissions = data.coder_parameter.skip_permissions.value == "true"
+  # Bei vorgebautem Template liegt claude schon unter /usr/local/bin - das
+  # Modul findet es per `command -v claude` und spart sich den Download.
+  install_claude_code = !var.prebaked_template
 }
 
 # ---------------------------------------------------------
