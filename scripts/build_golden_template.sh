@@ -47,6 +47,11 @@ done
 echo "==> Docker + Claude Code installieren"
 pct exec "$VMID" -- bash -c '
   set -e
+  # pct exec setzt HOME nicht zuverlaessig auf /root - der Claude-Installer
+  # legt claude aber unter $HOME/.local/bin ab, und der Coder-Agent laeuft
+  # spaeter als root mit HOME=/root.
+  export HOME=/root
+  export LC_ALL=C.UTF-8
   export DEBIAN_FRONTEND=noninteractive
   apt-get update
   apt-get install -y curl sudo git ca-certificates jq
@@ -55,7 +60,7 @@ pct exec "$VMID" -- bash -c '
   usermod -aG docker coder
   curl -fsSL https://claude.ai/install.sh | bash
   ln -sf /root/.local/bin/claude /usr/local/bin/claude
-  claude --version
+  /usr/local/bin/claude --version
   # Aufraeumen: Paketcache weg, machine-id leeren (jede Kopie bekommt beim
   # ersten Boot eine eigene). SSH-Hostkeys erzeugt Proxmox bei pct create
   # fuer jeden neuen Container ohnehin neu.
