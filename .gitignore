@@ -9,3 +9,7 @@ admin-ui/.env
 admin-ui/ssh/
 admin-ui/data/
 admin-ui/*.db
+
+# Python bytecode
+__pycache__/
+*.pyc
