@@ -2,23 +2,29 @@
 # Baut ein "goldenes" LXC-Template mit vorinstalliertem Docker + Claude Code,
 # damit neue Workspaces diese Downloads nicht jedes Mal neu machen muessen.
 #
-# Auf einem Proxmox-Node als root ausfuehren. Ergebnis landet in
-# /var/lib/vz/template/cache/ (= local:vztmpl/...) dieses Nodes - bei mehreren
-# Nodes die Datei danach auf jeden Node kopieren (siehe README).
+# Auf einem Proxmox-Node als root ausfuehren. Ergebnis landet auf dem Storage
+# OUT_STORAGE (Default: local = nur dieser Node). Mit einem geteilten Storage
+# wie CephFS (Inhaltstyp "Container template" aktiviert) sehen es alle Nodes,
+# z.B. OUT_STORAGE=cephfs.
 #
 # Alle Einstellungen per Umgebungsvariable, z.B.:
-#   NET_IP=10.0.75.250/24 NET_GW=10.0.75.1 VLAN_TAG=75 ./build_golden_template.sh
+#   OUT_STORAGE=cephfs STORAGE=vm-pool NET_IP=10.0.75.99/24 NET_GW=10.0.75.1 VLAN_TAG=75 ./build_golden_template.sh
 set -euo pipefail
 
 BASE_TEMPLATE="${BASE_TEMPLATE:-local:vztmpl/ubuntu-ssh-ready.tar.zst}"
 OUT_NAME="${OUT_NAME:-ubuntu-golden.tar.zst}"
+OUT_STORAGE="${OUT_STORAGE:-local}"
 VMID="${VMID:-9999}"
 STORAGE="${STORAGE:-local-lvm}"
 BRIDGE="${BRIDGE:-vmbr0}"
 VLAN_TAG="${VLAN_TAG:-}"
 NET_IP="${NET_IP:-dhcp}"
 NET_GW="${NET_GW:-}"
-CACHE_DIR=/var/lib/vz/template/cache
+
+# Zielverzeichnis des Storages fuer vztmpl-Inhalte direkt von Proxmox
+# erfragen (local -> /var/lib/vz/template/cache, CephFS -> /mnt/pve/<id>/...).
+CACHE_DIR=$(dirname "$(pvesm path "$OUT_STORAGE:vztmpl/$OUT_NAME")")
+mkdir -p "$CACHE_DIR"
 
 if pct status "$VMID" >/dev/null 2>&1; then
   echo "VMID $VMID ist schon belegt - andere VMID per VMID=... waehlen." >&2
@@ -83,7 +89,7 @@ mv "$DUMPFILE" "$CACHE_DIR/$OUT_NAME"
 rm -rf "$TMPDUMP"
 
 echo
-echo "Fertig: local:vztmpl/$OUT_NAME"
+echo "Fertig: $OUT_STORAGE:vztmpl/$OUT_NAME"
 echo "In terraform.tfvars:"
-echo "  lxc_template      = \"local:vztmpl/$OUT_NAME\""
+echo "  lxc_template      = \"$OUT_STORAGE:vztmpl/$OUT_NAME\""
 echo "  prebaked_template = \"true\""
