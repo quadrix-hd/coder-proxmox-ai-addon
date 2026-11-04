@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Sites{% endblock %}
+{% block content %}
+<h1>Sites</h1>
+<p class="page-sub">Alle live Kunden-Seiten.</p>
+
+{% if not sites %}
+  <div class="empty-state">
+    <p>Noch keine Sites.</p>
+    <p class="hint">Entweder hier oben auf "+ Neue Site", oder ueber den "Go live"-Button in einem Dev-Workspace.</p>
+  </div>
+{% else %}
+<table>
+  <thead>
+    <tr><th>Site</th><th>Domain</th><th>Status</th><th>IP</th><th>Image</th><th>Erstellt</th></tr>
+  </thead>
+  <tbody>
+  {% for s in sites %}
+  {% set st = 'live' if s.status == 'live' else ('error' if s.status == 'error' else 'pending') %}
+  <tr>
+    <td><a class="site-link" href="{{ url_for('site_detail', site_name=s.site_name) }}">{{ s.site_name }}</a></td>
+    <td>{{ s.customer_domain or "–" }}</td>
+    <td><span class="status"><span class="status-dot {{ st }}"></span>{{ s.status }}</span></td>
+    <td class="mono">{{ s.production_ip or "–" }}</td>
+    <td class="mono">{{ s.docker_image }}</td>
+    <td class="mono">{{ s.created_at[:16] }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

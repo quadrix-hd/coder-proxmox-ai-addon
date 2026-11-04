@@ -69,6 +69,24 @@ variable "lxc_gateway" {
   default = "10.0.75.1"
 }
 
+variable "lxc_template" {
+  type        = string
+  description = "LXC-Template (Proxmox-Volume-ID), aus dem jeder Workspace erstellt wird. Muss auf JEDEM Node liegen, auf dem Workspaces landen koennen (local:vztmpl ist node-lokal)."
+  default     = "local:vztmpl/ubuntu-ssh-ready.tar.zst"
+}
+
+variable "lxc_storage" {
+  type        = string
+  description = "Proxmox-Storage fuer die Root-Disk neuer Workspaces, z.B. local-lvm oder ein Ceph-RBD-Pool wie vm-pool. Aenderungen betreffen nur neu erstellte Workspaces."
+  default     = "local-lvm"
+}
+
+variable "prebaked_template" {
+  type        = bool
+  description = "true, wenn lxc_template mit scripts/build_golden_template.sh gebaut wurde (Docker + Claude Code schon drin). Dann wird Claude Code beim Workspace-Start nicht erneut installiert."
+  default     = false
+}
+
 variable "lxc_vlan_tag" {
   type    = number
   default = 75
@@ -90,6 +108,46 @@ variable "sdn_vnet" {
   type        = string
   description = "Name des Proxmox-SDN-VNet innerhalb der Zone. Nur relevant, wenn use_sdn_ipam=true."
   default     = ""
+}
+
+# ---------------------------------------------------------
+# "Go live" (optional) - siehe README, Abschnitt "Go live"
+# ---------------------------------------------------------
+
+variable "golive_enabled" {
+  type        = bool
+  description = "Baut den 'Go live'-Button samt Vorbereitung (Registry-Login, Aufruf der zentralen admin-ui/) in jeden Dev-Workspace ein. Default false: nichts davon wird angefasst, bis explizit aktiviert."
+  default     = false
+}
+
+variable "golive_registry_url" {
+  type        = string
+  description = "Host:Port der privaten Docker-Registry fuer Go-live-Images, siehe registry/README.md. Nur relevant wenn golive_enabled=true."
+  default     = ""
+}
+
+variable "golive_registry_user" {
+  type    = string
+  default = ""
+}
+
+variable "golive_registry_password" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+
+variable "golive_admin_ui_url" {
+  type        = string
+  description = "URL der zentralen Go-live-Admin-UI (siehe admin-ui/README.md), die die eigentliche Provisionierung uebernimmt - z.B. http://10.0.40.232:9000. Muss vom Workspace aus erreichbar sein (die Go-live-App im Workspace spricht serverseitig mit ihr, nicht der Browser). Nur relevant wenn golive_enabled=true."
+  default     = ""
+}
+
+variable "golive_admin_ui_token" {
+  type        = string
+  sensitive   = true
+  default     = ""
+  description = "API-Token der Admin-UI (= ADMIN_UI_API_TOKEN in admin-ui/.env). Damit beauftragt die Go-live-App im Workspace die Admin-UI. Nur relevant wenn golive_enabled=true."
 }
 
 # ---------------------------------------------------------
@@ -137,115 +195,34 @@ data "coder_parameter" "instance_size" {
   }
 }
 
-data "coder_workspace_preset" "small_auto_node" {
-  # Default-Preset: setzt bewusst KEIN target_node, damit der dynamische
-  # Default von data.coder_parameter.target_node (der am wenigsten
-  # ausgelastete Knoten) tatsaechlich greift. Wer einen bestimmten Knoten
-  # erzwingen will, nutzt eines der expliziten *_pve/*_pve4-Presets unten.
-  name    = "Klein - 1 CPU / 1GB RAM - automatische Node-Auswahl (mit Rueckfragen)"
+# Nur noch 3 reine Groessen-Presets statt der frueheren 13 (Groesse x Node x
+# Automatik-Modus-Kombinatorik). Presets setzen bewusst NUR instance_size -
+# Node und Automatik-Modus bleiben eigene, direkt im Parameter-Formular
+# sichtbare Parameter (siehe target_node/skip_permissions unten) statt in
+# jeder denkbaren Kombination als eigenes Preset dupliziert zu werden.
+# Noetig bleiben die Presets trotzdem: der Tasks-Flow (KI-Prompt-Feld) zeigt
+# rohe coder_parameter-Werte gar nicht an (siehe README, "coder_parameter
+# vs. coder_workspace_preset") - ohne Presets gaebe es dort keine
+# Groessenauswahl mehr.
+data "coder_workspace_preset" "small" {
+  name    = "Klein - 1 CPU / 1GB RAM / 8GB Disk"
   default = true
   parameters = {
-    instance_size    = "small"
-    skip_permissions = "false"
+    instance_size = "small"
   }
 }
 
-data "coder_workspace_preset" "small_pve4" {
-  name = "Klein - 1 CPU / 1GB RAM - pve4 (mit Rueckfragen)"
+data "coder_workspace_preset" "medium" {
+  name = "Mittel - 2 CPU / 2GB RAM / 15GB Disk"
   parameters = {
-    instance_size    = "small"
-    skip_permissions = "false"
-    target_node      = "pve4"
+    instance_size = "medium"
   }
 }
 
-data "coder_workspace_preset" "small_auto_pve" {
-  name = "Klein - 1 CPU / 1GB RAM - pve (Automatik, ohne Rueckfragen)"
+data "coder_workspace_preset" "large" {
+  name = "Groß - 4 CPU / 4GB RAM / 20GB Disk"
   parameters = {
-    instance_size    = "small"
-    skip_permissions = "true"
-    target_node      = "pve"
-  }
-}
-
-data "coder_workspace_preset" "small_auto_pve4" {
-  name = "Klein - 1 CPU / 1GB RAM - pve4 (Automatik, ohne Rueckfragen)"
-  parameters = {
-    instance_size    = "small"
-    skip_permissions = "true"
-    target_node      = "pve4"
-  }
-}
-
-data "coder_workspace_preset" "medium_pve" {
-  name = "Mittel - 2 CPU / 2GB RAM - pve (mit Rueckfragen)"
-  parameters = {
-    instance_size    = "medium"
-    skip_permissions = "false"
-    target_node      = "pve"
-  }
-}
-
-data "coder_workspace_preset" "medium_pve4" {
-  name = "Mittel - 2 CPU / 2GB RAM - pve4 (mit Rueckfragen)"
-  parameters = {
-    instance_size    = "medium"
-    skip_permissions = "false"
-    target_node      = "pve4"
-  }
-}
-
-data "coder_workspace_preset" "medium_auto_pve" {
-  name = "Mittel - 2 CPU / 2GB RAM - pve (Automatik, ohne Rueckfragen)"
-  parameters = {
-    instance_size    = "medium"
-    skip_permissions = "true"
-    target_node      = "pve"
-  }
-}
-
-data "coder_workspace_preset" "medium_auto_pve4" {
-  name = "Mittel - 2 CPU / 2GB RAM - pve4 (Automatik, ohne Rueckfragen)"
-  parameters = {
-    instance_size    = "medium"
-    skip_permissions = "true"
-    target_node      = "pve4"
-  }
-}
-
-data "coder_workspace_preset" "large_pve" {
-  name = "Gross (Dev) - 4 CPU / 4GB RAM - pve (mit Rueckfragen)"
-  parameters = {
-    instance_size    = "large"
-    skip_permissions = "false"
-    target_node      = "pve"
-  }
-}
-
-data "coder_workspace_preset" "large_pve4" {
-  name = "Gross (Dev) - 4 CPU / 4GB RAM - pve4 (mit Rueckfragen)"
-  parameters = {
-    instance_size    = "large"
-    skip_permissions = "false"
-    target_node      = "pve4"
-  }
-}
-
-data "coder_workspace_preset" "large_auto_pve" {
-  name = "Gross (Dev) - 4 CPU / 4GB RAM - pve (Automatik, ohne Rueckfragen)"
-  parameters = {
-    instance_size    = "large"
-    skip_permissions = "true"
-    target_node      = "pve"
-  }
-}
-
-data "coder_workspace_preset" "large_auto_pve4" {
-  name = "Gross (Dev) - 4 CPU / 4GB RAM - pve4 (Automatik, ohne Rueckfragen)"
-  parameters = {
-    instance_size    = "large"
-    skip_permissions = "true"
-    target_node      = "pve4"
+    instance_size = "large"
   }
 }
 
@@ -290,10 +267,15 @@ locals {
 data "coder_parameter" "target_node" {
   name         = "target_node"
   display_name = "Proxmox-Node"
-  description  = "Auslastung wird live angezeigt (RAM-Nutzung), Liste wird automatisch aus dem Cluster ermittelt."
+  description  = "Standardmaessig automatisch der am wenigsten ausgelastete Knoten. Auslastung wird live angezeigt (RAM-Nutzung), Liste wird automatisch aus dem Cluster ermittelt."
   type         = "string"
-  default      = data.external.cluster_load.result.default_node
+  default      = "auto"
   mutable      = false
+
+  option {
+    name  = "Automatisch (geringste Auslastung)"
+    value = "auto"
+  }
 
   dynamic "option" {
     for_each = local.cluster_nodes
@@ -302,6 +284,13 @@ data "coder_parameter" "target_node" {
       value = option.value.name
     }
   }
+}
+
+locals {
+  # "auto" (Default/erste Option oben) loest sich hier auf den tatsaechlich
+  # am wenigsten ausgelasteten Knoten auf - ueberall unten statt
+  # data.coder_parameter.target_node.value direkt verwenden.
+  resolved_target_node = data.coder_parameter.target_node.value == "auto" ? data.external.cluster_load.result.default_node : data.coder_parameter.target_node.value
 }
 
 data "external" "free_ip" {
@@ -333,7 +322,7 @@ data "external" "free_ip_sdn" {
     token_id     = var.pm_api_token_id
     token_secret = var.pm_api_token_secret
     tls_insecure = var.pm_tls_insecure ? "true" : "false"
-    node         = data.coder_parameter.target_node.value
+    node         = local.resolved_target_node
     zone         = var.sdn_zone
     vnet         = var.sdn_vnet
   }
@@ -343,6 +332,7 @@ locals {
   workspace_ip  = var.use_sdn_ipam ? data.external.free_ip_sdn[0].result.ip : data.external.free_ip[0].result.ip
   workspace_mac = var.use_sdn_ipam ? data.external.free_ip_sdn[0].result.mac : null
 }
+
 
 # ---------------------------------------------------------
 # Coder Agent (läuft im LXC)
@@ -363,24 +353,94 @@ resource "coder_agent" "main" {
     # Claude Code Skills zentral aus privatem Repo nachladen
     # (Token laeuft ueber GIT_ASKPASS statt in der Klartext-URL, damit es nicht in
     #  der Prozessliste (ps aux) des git-Subprozesses auftaucht)
+    # Nur einmal pro Tag neu synchronisieren statt bei JEDEM Workspace-Start -
+    # ein git clone zu GitHub bei jedem Start ist unnoetige Wartezeit und ein
+    # zusaetzlicher Netzwerk-Abhaengigkeitspunkt, nur um Skills zu finden, die
+    # sich fast nie mehrmals am Tag aendern.
     mkdir -p /root/.claude/skills
-    rm -rf /tmp/skills-repo
-    if [ -n "${var.skills_repo_token}" ]; then
+    SKILLS_MARKER=/root/.claude/skills/.last-sync
+    SKILLS_AGE=999999
+    if [ -f "$SKILLS_MARKER" ]; then
+      SKILLS_AGE=$(( $(date +%s) - $(cat "$SKILLS_MARKER") ))
+    fi
+    if [ -n "${var.skills_repo_token}" ] && [ "$SKILLS_AGE" -gt 86400 ]; then
+      rm -rf /tmp/skills-repo
       SKILLS_ASKPASS=$(mktemp)
       printf '#!/bin/bash\nprintf "%%s" "%s"\n' "${var.skills_repo_token}" > "$SKILLS_ASKPASS"
       chmod 700 "$SKILLS_ASKPASS"
       GIT_ASKPASS="$SKILLS_ASKPASS" GIT_TERMINAL_PROMPT=0 \
         git clone --depth 1 "https://x-access-token@github.com/${var.skills_repo_path}.git" /tmp/skills-repo 2>/dev/null || true
       rm -f "$SKILLS_ASKPASS"
+      if [ -d /tmp/skills-repo ]; then
+        for skill_dir in /tmp/skills-repo/*/; do
+          skill_name=$(basename "$skill_dir")
+          rm -rf "/root/.claude/skills/$skill_name"
+          cp -r "$skill_dir" "/root/.claude/skills/$skill_name"
+        done
+        rm -rf /tmp/skills-repo
+      fi
+      date +%s > "$SKILLS_MARKER"
     fi
-    if [ -d /tmp/skills-repo ]; then
-      for skill_dir in /tmp/skills-repo/*/; do
-        skill_name=$(basename "$skill_dir")
-        rm -rf "/root/.claude/skills/$skill_name"
-        cp -r "$skill_dir" "/root/.claude/skills/$skill_name"
-      done
-      rm -rf /tmp/skills-repo
+
+    # Port-8080-Konvention fuer den Demo-Button als globale Claude-Code-
+    # Anweisung hinterlegen, statt sich darauf zu verlassen, dass jeder
+    # Prompt es explizit erwaehnt (der Button ist fest auf localhost:8080
+    # verdrahtet - ohne diesen Port gibt's einen 502). Guard gegen
+    # doppeltes Anhaengen, falls das Skript durch "Restart=always" der
+    # coder-agent.service erneut laeuft.
+    mkdir -p /root/.claude
+    if ! grep -q "Deployment-Konvention fuer diesen Workspace" /root/.claude/CLAUDE.md 2>/dev/null; then
+      cat >> /root/.claude/CLAUDE.md <<'CLAUDEMD_EOF'
+
+## Deployment-Konvention fuer diesen Workspace
+Beim Deployen einer Web-App oder Demo-Seite mit Docker in diesem Workspace
+IMMER auf dem Host-Port 8080 veroeffentlichen (z.B. `docker run -p 8080:80 ...`),
+unabhaengig davon was im Auftrag steht. Der "Demo-Webseite"-Button in Coder ist
+fest auf http://localhost:8080 verdrahtet - ohne genau dieses Port-Mapping zeigt
+er einen 502-Fehler.
+CLAUDEMD_EOF
     fi
+
+%{if var.golive_enabled~}
+    # "Go live": Registry-Login + die kleine Go-live-App (scripts/golive-app.py),
+    # die ueber den gleichnamigen Button direkt in Coder geoeffnet wird. Die
+    # eigentliche Provisionierung (Terraform, SSH-Key, Pangolin) laeuft
+    # zentral in admin-ui/ (siehe README, Abschnitt "Go live").
+    mkdir -p /etc/docker
+    if ! grep -q "${var.golive_registry_url}" /etc/docker/daemon.json 2>/dev/null; then
+      # Docker-Neustart nur, wenn die Registry-Config sich tatsaechlich
+      # aendert (z.B. echter Erststart) - sonst wuerde das bei JEDEM
+      # Workspace-Start passieren und kurzzeitig alle laufenden Container
+      # in diesem Workspace neu starten, ohne jeden Grund.
+      echo '{"insecure-registries":["${var.golive_registry_url}"]}' > /etc/docker/daemon.json
+      systemctl restart docker || true
+    fi
+    echo '${var.golive_registry_password}' | docker login ${var.golive_registry_url} -u '${var.golive_registry_user}' --password-stdin || true
+
+    command -v python3 >/dev/null || (apt-get update && apt-get install -y python3)
+    install -d -m 755 /opt/golive
+    echo '${base64encode(file("${path.module}/scripts/golive-app.py"))}' | base64 -d > /opt/golive/golive-app.py
+    (umask 077; printf 'REGISTRY_URL=%s\nADMIN_UI_URL=%s\nADMIN_UI_TOKEN=%s\nWORKSPACE_NAME=%s\n' \
+      '${var.golive_registry_url}' '${var.golive_admin_ui_url}' '${var.golive_admin_ui_token}' '${data.coder_workspace.me.name}' > /etc/golive-app.env)
+    cat > /etc/systemd/system/golive-app.service <<'GOLIVE_UNIT'
+[Unit]
+Description=Go live (Workspace-App)
+After=network-online.target docker.service
+
+[Service]
+EnvironmentFile=/etc/golive-app.env
+ExecStart=/usr/bin/python3 /opt/golive/golive-app.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+GOLIVE_UNIT
+    systemctl daemon-reload
+    systemctl enable golive-app.service >/dev/null 2>&1 || true
+    systemctl restart golive-app.service
+    rm -f /usr/local/bin/go-live.sh
+%{endif~}
   EOT
 }
 
@@ -390,16 +450,24 @@ resource "coder_agent" "main" {
 
 resource "proxmox_lxc" "workspace" {
   hostname     = "ws-${data.coder_workspace_owner.me.name}-${data.coder_workspace.me.name}"
-  target_node  = data.coder_parameter.target_node.value
-  ostemplate   = "local:vztmpl/ubuntu-ssh-ready.tar.zst"
+  target_node  = local.resolved_target_node
+  ostemplate   = var.lxc_template
   cores        = local.chosen.cores
   memory       = local.chosen.memory
   swap         = local.chosen.swap
   unprivileged = true
   start        = data.coder_workspace.me.start_count == 1
+  # Ohne dieses Flag ueberlebt ein laufender Workspace keinen Proxmox-
+  # Host-Neustart: Proxmox startet beim Hochfahren nur Container mit
+  # onboot=1 automatisch wieder, alles andere bleibt gestoppt stehen,
+  # bis jemand es manuell (oder ueber Coder) wieder startet.
+  onboot = true
 
   lifecycle {
-    ignore_changes = [network, ostemplate]
+    # rootfs: bestehende Workspaces bleiben auf ihrem bisherigen Storage,
+    # wenn lxc_storage spaeter geaendert wird (z.B. local-lvm -> Ceph) -
+    # sonst wuerde Terraform sie beim naechsten Start neu erstellen wollen.
+    ignore_changes = [network, ostemplate, rootfs]
   }
 
   features {
@@ -407,7 +475,7 @@ resource "proxmox_lxc" "workspace" {
   }
 
   rootfs {
-    storage = "local-lvm"
+    storage = var.lxc_storage
     size    = local.chosen.disk
   }
 
@@ -432,7 +500,9 @@ resource "proxmox_lxc" "workspace" {
 
   provisioner "remote-exec" {
     inline = [
-      "apt-get update && apt-get install -y curl sudo",
+      # Mit vorgebautem Template sind curl/sudo schon da - dann kein
+      # apt-get update im kritischen Pfad, bevor der Agent ueberhaupt laeuft.
+      "command -v curl >/dev/null && command -v sudo >/dev/null || (apt-get update && apt-get install -y curl sudo)",
       "useradd -m -s /bin/bash coder || true",
       "mkdir -p /opt/coder",
       "echo '${base64encode(coder_agent.main.init_script)}' | base64 -d > /opt/coder/init.sh",
@@ -464,7 +534,7 @@ resource "null_resource" "sdn_ip_release" {
     token_id     = var.pm_api_token_id
     token_secret = var.pm_api_token_secret
     tls_insecure = var.pm_tls_insecure ? "true" : "false"
-    node         = data.coder_parameter.target_node.value
+    node         = local.resolved_target_node
     zone         = var.sdn_zone
     vnet         = var.sdn_vnet
     ip           = data.external.free_ip_sdn[0].result.ip
@@ -505,6 +575,9 @@ module "claude-code" {
   ai_prompt                    = data.coder_task.me.prompt
   model                        = "sonnet"
   dangerously_skip_permissions = data.coder_parameter.skip_permissions.value == "true"
+  # Bei vorgebautem Template liegt claude schon unter /usr/local/bin - das
+  # Modul findet es per `command -v claude` und spart sich den Download.
+  install_claude_code = !var.prebaked_template
 }
 
 # ---------------------------------------------------------
@@ -517,6 +590,19 @@ resource "coder_app" "reboot" {
   display_name = "Server neu starten"
   icon         = "/emojis/1f504.png"
   command      = "sudo reboot"
+}
+
+# Ein Button, eine Seite direkt in Coder (Coders eigener Login, kein
+# Terminal): aktuelle Seite veroeffentlichen, Fortschritt live sehen,
+# bestehende Live-Seiten mit einem Klick aktualisieren.
+# Die App laeuft im Workspace (scripts/golive-app.py, systemd-Unit oben).
+resource "coder_app" "go_live" {
+  count        = var.golive_enabled ? 1 : 0
+  agent_id     = coder_agent.main.id
+  slug         = "go-live"
+  display_name = "Go live"
+  icon         = "/emojis/1f680.png"
+  url          = "http://localhost:7777"
 }
 
 resource "coder_app" "demo_site" {
