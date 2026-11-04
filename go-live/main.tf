@@ -60,6 +60,12 @@ variable "lxc_vlan_tag" {
   type = number
 }
 
+variable "lxc_storage" {
+  type        = string
+  default     = "local-lvm"
+  description = "Proxmox-Storage fuer die Root-Disk der Produktions-LXC, z.B. ein Ceph-RBD-Pool wie vm-pool."
+}
+
 variable "ip_range_start" {
   type        = number
   default     = 200
@@ -167,7 +173,7 @@ resource "proxmox_lxc" "production" {
   }
 
   rootfs {
-    storage = "local-lvm"
+    storage = var.lxc_storage
     size    = "15G"
   }
 

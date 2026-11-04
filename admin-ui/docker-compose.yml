@@ -21,6 +21,7 @@ services:
       LXC_SUBNET: "${LXC_SUBNET}"
       LXC_GATEWAY: "${LXC_GATEWAY}"
       LXC_VLAN_TAG: "${LXC_VLAN_TAG}"
+      LXC_STORAGE: "${LXC_STORAGE:-local-lvm}"
 
       REGISTRY_URL: "${REGISTRY_URL}"
       REGISTRY_USER: "${REGISTRY_USER}"

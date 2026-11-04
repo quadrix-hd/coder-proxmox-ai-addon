@@ -18,6 +18,7 @@ claude_code_oauth_token = "DEIN-CLAUDE-OAUTH-TOKEN"   # sk-ant-oat...
 lxc_subnet   = "10.0.75"
 lxc_gateway  = "10.0.75.1"
 lxc_vlan_tag = "75"          # String-Literal, siehe Hinweis oben
+lxc_storage  = "local-lvm"   # z.B. "vm-pool" bei Ceph-RBD; gilt nur fuer neue Workspaces
 
 # Optional, aber deutlich schnellere Workspace-Erstellung: vorgebautes
 # Template mit Docker + Claude Code (scripts/build_golden_template.sh, siehe

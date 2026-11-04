@@ -265,7 +265,7 @@ By default every new workspace installs Docker (`get.docker.com`) and Claude Cod
 NET_IP=10.0.75.250/24 NET_GW=10.0.75.1 VLAN_TAG=75 ./build_golden_template.sh
 ```
 
-(Use a free IP in your workspace subnet, or omit `NET_IP`/`NET_GW` if that VLAN has DHCP. The build container is deleted again afterwards.) The result is `local:vztmpl/ubuntu-golden.tar.zst`. `local` storage is per node, so **copy it to every node** workspaces can land on:
+(Use a free IP in your workspace subnet, or omit `NET_IP`/`NET_GW` if that VLAN has DHCP. Add `STORAGE=vm-pool` or similar if your container storage isn't `local-lvm`. The build container is deleted again afterwards.) The result is `local:vztmpl/ubuntu-golden.tar.zst`. `local` storage is per node, so **copy it to every node** workspaces can land on (or, with Ceph, put it on a CephFS storage that has the "Container template" content type enabled — then one copy serves all nodes):
 
 ```bash
 scp /var/lib/vz/template/cache/ubuntu-golden.tar.zst root@pve4:/var/lib/vz/template/cache/

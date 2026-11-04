@@ -45,6 +45,7 @@ def _common_vars() -> dict:
         "lxc_subnet": os.environ["LXC_SUBNET"],
         "lxc_gateway": os.environ["LXC_GATEWAY"],
         "lxc_vlan_tag": int(os.environ["LXC_VLAN_TAG"]),
+        "lxc_storage": os.environ.get("LXC_STORAGE", "local-lvm"),
         "ssh_public_key": ssh_public_key,
         "ssh_private_key": ssh_private_key,
         "registry_url": os.environ["REGISTRY_URL"],

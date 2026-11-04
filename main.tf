@@ -75,6 +75,12 @@ variable "lxc_template" {
   default     = "local:vztmpl/ubuntu-ssh-ready.tar.zst"
 }
 
+variable "lxc_storage" {
+  type        = string
+  description = "Proxmox-Storage fuer die Root-Disk neuer Workspaces, z.B. local-lvm oder ein Ceph-RBD-Pool wie vm-pool. Aenderungen betreffen nur neu erstellte Workspaces."
+  default     = "local-lvm"
+}
+
 variable "prebaked_template" {
   type        = bool
   description = "true, wenn lxc_template mit scripts/build_golden_template.sh gebaut wurde (Docker + Claude Code schon drin). Dann wird Claude Code beim Workspace-Start nicht erneut installiert."
@@ -431,7 +437,10 @@ resource "proxmox_lxc" "workspace" {
   onboot = true
 
   lifecycle {
-    ignore_changes = [network, ostemplate]
+    # rootfs: bestehende Workspaces bleiben auf ihrem bisherigen Storage,
+    # wenn lxc_storage spaeter geaendert wird (z.B. local-lvm -> Ceph) -
+    # sonst wuerde Terraform sie beim naechsten Start neu erstellen wollen.
+    ignore_changes = [network, ostemplate, rootfs]
   }
 
   features {
@@ -439,7 +448,7 @@ resource "proxmox_lxc" "workspace" {
   }
 
   rootfs {
-    storage = "local-lvm"
+    storage = var.lxc_storage
     size    = local.chosen.disk
   }
 
