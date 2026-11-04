@@ -54,6 +54,20 @@ Seiten ("Go live"). Loest zwei Probleme der vorherigen Button-nur-Loesung:
 4. Unter `http://<docker-host>:9000` einloggen (Passwort = das, aus dem du
    `ADMIN_UI_PASSWORD_HASH` erzeugt hast).
 
+## Passwort vergessen / aendern
+
+Das Passwort ist nur als Hash gespeichert, also nicht wiederherstellbar -
+einfach ein neues setzen:
+
+```bash
+cd admin-ui
+docker compose run --rm admin-ui python3 -c "from werkzeug.security import generate_password_hash; print(generate_password_hash('NEUES-PASSWORT'))"
+```
+
+Ausgabe in `.env` als `ADMIN_UI_PASSWORD_HASH='...'` eintragen (einfache
+Anfuehrungszeichen, sonst zerlegt Docker Compose die `$`-Zeichen im Hash),
+dann `docker compose up -d` - das erstellt den Container mit dem neuen Wert neu.
+
 ## Pangolin-Integration (optional, UNVERIFIZIERT)
 
 Wenn `PANGOLIN_API_URL`/`PANGOLIN_API_KEY`/`PANGOLIN_ORG_ID` gesetzt sind,
