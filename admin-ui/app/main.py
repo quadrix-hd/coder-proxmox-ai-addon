@@ -4,7 +4,7 @@ import threading
 from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 
 from . import db, provisioning
-from .auth import check_api_token, check_password, login_required
+from .auth import api_token_required, check_password, login_required
 from .pangolin_client import client_from_env
 
 
@@ -51,7 +51,7 @@ def create_app():
         pangolin_error = None
         if pangolin:
             try:
-                domains = pangolin.list_domains()
+                domains = provisioning.normalize_domains(pangolin.list_domains())
             except Exception as exc:  # noqa: BLE001 - show it in the form, don't crash the page
                 pangolin_error = str(exc)
         return render_template(
@@ -98,18 +98,7 @@ def create_app():
         if not site:
             return "Nicht gefunden", 404
         new_tag = request.form["docker_image"].strip()
-        from . import ssh_runner
-        try:
-            ssh_runner.redeploy_image(
-                site["production_ip"],
-                os.environ["REGISTRY_URL"],
-                os.environ["REGISTRY_USER"],
-                os.environ["REGISTRY_PASSWORD"],
-                new_tag,
-            )
-            db.update_site(site_name, docker_image=new_tag, status="live", last_error="")
-        except Exception as exc:  # noqa: BLE001
-            db.update_site(site_name, status="error", last_error=f"Redeploy fehlgeschlagen: {exc}")
+        _start_redeploy(site_name, new_tag)
         return redirect(url_for("site_detail", site_name=site_name))
 
     @app.post("/sites/<site_name>/delete")
@@ -118,12 +107,42 @@ def create_app():
         threading.Thread(target=provisioning.teardown_site, args=(site_name,), daemon=True).start()
         return redirect(url_for("sites_list"))
 
-    # --- JSON API for the dev-workspace "Go live" button ---
+    # --- JSON API fuer die "Go live"-App in den Dev-Workspaces ---
+
+    @app.get("/api/sites")
+    @api_token_required
+    def api_list_sites():
+        return jsonify(sites=db.list_sites())
+
+    @app.get("/api/domains")
+    @api_token_required
+    def api_domains():
+        pangolin = client_from_env(os.environ)
+        if not pangolin:
+            return jsonify(pangolin=False, domains=[])
+        try:
+            return jsonify(pangolin=True, domains=provisioning.normalize_domains(pangolin.list_domains()))
+        except Exception as exc:  # noqa: BLE001 - in der Workspace-App anzeigen
+            return jsonify(pangolin=True, domains=[], error=f"Pangolin-Domains nicht abrufbar: {exc}")
+
+    @app.post("/api/sites/<site_name>/redeploy")
+    @api_token_required
+    def api_redeploy(site_name):
+        site = db.get_site(site_name)
+        if not site:
+            return jsonify(error="not found"), 404
+        if site["status"] not in ("live", "error"):
+            return jsonify(error=f"'{site_name}' ist gerade beschaeftigt ({site['status']})"), 409
+        payload = request.get_json(force=True, silent=True) or {}
+        docker_image = (payload.get("docker_image") or "").strip()
+        if not docker_image:
+            return jsonify(error="docker_image is required"), 400
+        _start_redeploy(site_name, docker_image)
+        return jsonify(status="redeploying"), 202
 
     @app.post("/api/sites")
+    @api_token_required
     def api_create_site():
-        if not check_api_token(request.headers.get("Authorization", "")):
-            return jsonify(error="unauthorized"), 401
         payload = request.get_json(force=True, silent=True) or {}
         site_name = (payload.get("site_name") or "").strip()
         docker_image = (payload.get("docker_image") or "").strip()
@@ -131,7 +150,7 @@ def create_app():
         if not site_name or not docker_image:
             return jsonify(error="site_name and docker_image are required"), 400
         if db.site_exists(site_name):
-            return jsonify(error=f"site '{site_name}' already exists - use the web UI to redeploy instead"), 409
+            return jsonify(error=f"Eine Live-Seite '{site_name}' gibt es schon - anderen Namen waehlen oder sie unten aktualisieren."), 409
 
         db.create_site(site_name, customer_domain, docker_image)
         _start_provisioning(
@@ -143,15 +162,19 @@ def create_app():
         return jsonify(status="provisioning", status_url=f"{base_url}/sites/{site_name}"), 202
 
     @app.get("/api/sites/<site_name>")
+    @api_token_required
     def api_site_status(site_name):
-        if not check_api_token(request.headers.get("Authorization", "")):
-            return jsonify(error="unauthorized"), 401
         site = db.get_site(site_name)
         if not site:
             return jsonify(error="not found"), 404
         return jsonify(site)
 
     return app
+
+
+def _start_redeploy(site_name, docker_image):
+    db.update_site(site_name, status="redeploying", last_error="")
+    threading.Thread(target=provisioning.redeploy_site, args=(site_name, docker_image), daemon=True).start()
 
 
 def _start_provisioning(site_name, customer_domain, docker_image, newt_id, newt_secret,

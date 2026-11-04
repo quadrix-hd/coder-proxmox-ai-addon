@@ -4,23 +4,24 @@
   <meta charset="utf-8">
   <title>{% block title %}Go live{% endblock %} · Go live</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  {% block head %}{% endblock %}
   <style>
     :root {
-      --bg: #fafafa;
-      --surface: #ffffff;
-      --border: #eaeaea;
-      --border-strong: #d4d4d8;
-      --text: #171717;
-      --text-muted: #737373;
-      --text-faint: #a3a3a3;
-      --accent: #171717;
-      --accent-hover: #000000;
-      --danger: #e5484d;
-      --danger-bg: #fff0f0;
-      --danger-border: #ffd4d6;
-      --success-dot: #28c840;
-      --error-dot: #e5484d;
-      --pending-dot: #f5a623;
+      --bg: #111113;
+      --surface: #09090b;
+      --border: #27272a;
+      --border-strong: #3f3f46;
+      --text: #fafafa;
+      --text-muted: #a1a1aa;
+      --text-faint: #71717a;
+      --accent: #fafafa;
+      --accent-hover: #e4e4e7;
+      --danger: #f87171;
+      --danger-bg: #1c0a0a;
+      --danger-border: #7f1d1d;
+      --success-dot: #22c55e;
+      --error-dot: #ef4444;
+      --pending-dot: #f59e0b;
       --radius: 8px;
       --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       --sidebar-w: 220px;
@@ -60,7 +61,7 @@
     .brand .logo {
       width: 22px; height: 22px; border-radius: 6px;
       background: var(--accent);
-      color: #fff;
+      color: var(--surface);
       display: flex; align-items: center; justify-content: center;
       font-size: 0.75rem; font-weight: 700;
     }
@@ -145,7 +146,7 @@
     input:focus, select:focus {
       outline: none;
       border-color: var(--text);
-      box-shadow: 0 0 0 3px rgba(0,0,0,.06);
+      box-shadow: 0 0 0 3px rgba(255,255,255,.08);
     }
     .btn {
       display: inline-flex;
@@ -160,7 +161,7 @@
       text-decoration: none;
       font-family: inherit;
     }
-    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary { background: var(--accent); color: var(--surface); }
     .btn-primary:hover { background: var(--accent-hover); }
     .btn-danger { background: var(--surface); color: var(--danger); border-color: var(--danger-border); }
     .btn-danger:hover { background: var(--danger-bg); }
@@ -179,7 +180,7 @@
     .hint { color: var(--text-muted); font-size: 0.82rem; margin: 0.4rem 0 1rem; line-height: 1.45; }
     .empty-state { text-align: center; padding: 3.5rem 1rem; color: var(--text-muted); font-size: 0.9rem; }
     pre {
-      background: #0a0a0a;
+      background: #000;
       color: #e5e5e5;
       padding: 1rem;
       border-radius: 6px;

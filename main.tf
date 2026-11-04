@@ -139,8 +139,15 @@ variable "golive_registry_password" {
 
 variable "golive_admin_ui_url" {
   type        = string
-  description = "URL der zentralen Go-live-Admin-UI (siehe admin-ui/README.md), die die eigentliche Provisionierung uebernimmt - z.B. http://10.0.75.1:9000. Nur relevant wenn golive_enabled=true. Der Dev-Workspace braucht dafuer keinerlei Zugangsdaten mehr - der 'Go live'-Button pusht nur das Image und verlinkt dann auf die Admin-UI; dort (im Browser, mit eigenem Login) passiert alles Weitere."
+  description = "URL der zentralen Go-live-Admin-UI (siehe admin-ui/README.md), die die eigentliche Provisionierung uebernimmt - z.B. http://10.0.40.232:9000. Muss vom Workspace aus erreichbar sein (die Go-live-App im Workspace spricht serverseitig mit ihr, nicht der Browser). Nur relevant wenn golive_enabled=true."
   default     = ""
+}
+
+variable "golive_admin_ui_token" {
+  type        = string
+  sensitive   = true
+  default     = ""
+  description = "API-Token der Admin-UI (= ADMIN_UI_API_TOKEN in admin-ui/.env). Damit beauftragt die Go-live-App im Workspace die Admin-UI. Nur relevant wenn golive_enabled=true."
 }
 
 # ---------------------------------------------------------
@@ -395,11 +402,10 @@ CLAUDEMD_EOF
     fi
 
 %{if var.golive_enabled~}
-    # "Go live": nur noch Registry-Login + das Button-Skript selbst - die
+    # "Go live": Registry-Login + die kleine Go-live-App (scripts/golive-app.py),
+    # die ueber den gleichnamigen Button direkt in Coder geoeffnet wird. Die
     # eigentliche Provisionierung (Terraform, SSH-Key, Pangolin) laeuft
-    # zentral in admin-ui/ (siehe README, Abschnitt "Go live"), nicht mehr
-    # in diesem ephemeren, nicht-root Workspace-Container. Das ist auch der
-    # Grund, warum hier kein git clone/Terraform-Download mehr noetig ist.
+    # zentral in admin-ui/ (siehe README, Abschnitt "Go live").
     mkdir -p /etc/docker
     if ! grep -q "${var.golive_registry_url}" /etc/docker/daemon.json 2>/dev/null; then
       # Docker-Neustart nur, wenn die Registry-Config sich tatsaechlich
@@ -411,8 +417,29 @@ CLAUDEMD_EOF
     fi
     echo '${var.golive_registry_password}' | docker login ${var.golive_registry_url} -u '${var.golive_registry_user}' --password-stdin || true
 
-    echo '${base64encode(templatefile("${path.module}/scripts/go-live.sh.tftpl", { registry_url = var.golive_registry_url, admin_ui_url = var.golive_admin_ui_url, staging_name = "${data.coder_workspace_owner.me.name}-${data.coder_workspace.me.name}" }))}' | base64 -d > /usr/local/bin/go-live.sh
-    chmod +x /usr/local/bin/go-live.sh
+    command -v python3 >/dev/null || (apt-get update && apt-get install -y python3)
+    install -d -m 755 /opt/golive
+    echo '${base64encode(file("${path.module}/scripts/golive-app.py"))}' | base64 -d > /opt/golive/golive-app.py
+    (umask 077; printf 'REGISTRY_URL=%s\nADMIN_UI_URL=%s\nADMIN_UI_TOKEN=%s\nWORKSPACE_NAME=%s\n' \
+      '${var.golive_registry_url}' '${var.golive_admin_ui_url}' '${var.golive_admin_ui_token}' '${data.coder_workspace.me.name}' > /etc/golive-app.env)
+    cat > /etc/systemd/system/golive-app.service <<'GOLIVE_UNIT'
+[Unit]
+Description=Go live (Workspace-App)
+After=network-online.target docker.service
+
+[Service]
+EnvironmentFile=/etc/golive-app.env
+ExecStart=/usr/bin/python3 /opt/golive/golive-app.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+GOLIVE_UNIT
+    systemctl daemon-reload
+    systemctl enable golive-app.service >/dev/null 2>&1 || true
+    systemctl restart golive-app.service
+    rm -f /usr/local/bin/go-live.sh
 %{endif~}
   EOT
 }
@@ -565,32 +592,17 @@ resource "coder_app" "reboot" {
   command      = "sudo reboot"
 }
 
-# Terminal-Button, der /usr/local/bin/go-live.sh ausfuehrt (geschrieben vom
-# startup_script oben, nur wenn golive_enabled=true). Macht NUR den einen
-# Schritt, der zwingend im Workspace passieren muss (Demo-Image in die
-# Registry pushen, nicht-interaktiv, keine Eingaben) und verlinkt danach auf
-# die Admin-UI, wo Site-Name/Domain/Newt-Credentials in einem richtigen Formular
-# statt per Terminal-Prompt eingegeben werden. Siehe README, Abschnitt "Go live".
+# Ein Button, eine Seite direkt in Coder (Coders eigener Login, kein
+# Terminal): aktuelle Seite veroeffentlichen, Fortschritt live sehen,
+# bestehende Live-Seiten mit einem Klick aktualisieren.
+# Die App laeuft im Workspace (scripts/golive-app.py, systemd-Unit oben).
 resource "coder_app" "go_live" {
   count        = var.golive_enabled ? 1 : 0
   agent_id     = coder_agent.main.id
   slug         = "go-live"
-  display_name = "Go live (Image pushen)"
+  display_name = "Go live"
   icon         = "/emojis/1f680.png"
-  command      = "bash /usr/local/bin/go-live.sh"
-}
-
-# Permanenter Button direkt zur Admin-UI (kein Terminal) - darueber laeuft
-# nach dem ersten Push alles Weitere: Status verfolgen, redeployen, Site
-# entfernen. Siehe admin-ui/README.md.
-resource "coder_app" "golive_dashboard" {
-  count        = var.golive_enabled && var.golive_admin_ui_url != "" ? 1 : 0
-  agent_id     = coder_agent.main.id
-  slug         = "go-live-dashboard"
-  display_name = "Site-Verwaltung"
-  icon         = "/emojis/1f4ca.png"
-  url          = var.golive_admin_ui_url
-  external     = true
+  url          = "http://localhost:7777"
 }
 
 resource "coder_app" "demo_site" {

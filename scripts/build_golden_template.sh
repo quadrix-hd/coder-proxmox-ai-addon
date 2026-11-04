@@ -60,7 +60,7 @@ pct exec "$VMID" -- bash -c '
   export LC_ALL=C.UTF-8
   export DEBIAN_FRONTEND=noninteractive
   apt-get update
-  apt-get install -y curl sudo git ca-certificates jq
+  apt-get install -y curl sudo git ca-certificates jq python3
   curl -fsSL https://get.docker.com | sh
   useradd -m -s /bin/bash coder 2>/dev/null || true
   usermod -aG docker coder

@@ -2,7 +2,7 @@ import hmac
 import os
 from functools import wraps
 
-from flask import redirect, request, session, url_for
+from flask import jsonify, redirect, request, session, url_for
 from werkzeug.security import check_password_hash
 
 ADMIN_PASSWORD_HASH = os.environ.get("ADMIN_UI_PASSWORD_HASH", "")
@@ -20,6 +20,16 @@ def login_required(view):
     def wrapped(*args, **kwargs):
         if not session.get("logged_in"):
             return redirect(url_for("login", next=request.path))
+        return view(*args, **kwargs)
+
+    return wrapped
+
+
+def api_token_required(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if not check_api_token(request.headers.get("Authorization", "")):
+            return jsonify(error="unauthorized"), 401
         return view(*args, **kwargs)
 
     return wrapped

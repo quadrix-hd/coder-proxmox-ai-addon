@@ -85,8 +85,9 @@ class PangolinClient:
             "http": True,
             "protocol": "tcp",
             "domainId": domain_id,
-            "subdomain": subdomain,
         }
+        if subdomain:
+            body["subdomain"] = subdomain
         return self._request("PUT", f"/org/{self.org_id}/public-resource", json=body)
 
     def delete_resource(self, resource_id: str):

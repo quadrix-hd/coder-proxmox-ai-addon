@@ -2,7 +2,7 @@
 # von Coder unabhaengige Proxmox-LXC fuer eine fertige Kundenseite, deployt
 # das Docker-Image aus der privaten Registry und verbindet sie per Newt mit
 # Pangolin. Wird typischerweise von main.tf's "Go live"-Button im
-# Dev-Workspace aus aufgerufen (siehe scripts/go-live.sh.tftpl dort), kann
+# Dev-Workspace aus aufgerufen (siehe admin-ui/), kann
 # aber auch manuell ausgefuehrt werden.
 #
 # WICHTIG - kein geteilter State: jeder "Go live"-Lauf startet mit frischem

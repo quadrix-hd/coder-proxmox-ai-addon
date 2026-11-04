@@ -7,9 +7,40 @@
 import os
 import traceback
 
-from . import db
+from . import db, ssh_runner
 from .pangolin_client import PangolinError, client_from_env
 from .terraform_runner import TerraformError, apply_site, destroy_site
+
+
+def normalize_domains(raw) -> list:
+    """Pangolins Domain-Liste in [{id, name}] umwandeln - tolerant gegenueber
+    leicht unterschiedlichen Antwortformen (Liste direkt oder {"domains": [...]},
+    Feldnamen domainId/id bzw. baseDomain/domain), da gegen keine echte
+    Instanz verifiziert (siehe pangolin_client.py)."""
+    if isinstance(raw, dict):
+        raw = raw.get("domains", [])
+    result = []
+    for d in raw or []:
+        did = d.get("domainId") or d.get("id")
+        name = d.get("baseDomain") or d.get("domain") or d.get("name") or did
+        if did:
+            result.append({"id": str(did), "name": str(name)})
+    return result
+
+
+def redeploy_site(site_name: str, docker_image: str):
+    site = db.get_site(site_name)
+    try:
+        ssh_runner.redeploy_image(
+            site["production_ip"],
+            os.environ["REGISTRY_URL"],
+            os.environ["REGISTRY_USER"],
+            os.environ["REGISTRY_PASSWORD"],
+            docker_image,
+        )
+        db.update_site(site_name, docker_image=docker_image, status="live", last_error="")
+    except Exception as exc:  # noqa: BLE001
+        db.update_site(site_name, status="error", last_error=f"Update fehlgeschlagen: {exc}")
 
 REQUIRED_ENV = [
     "PM_API_URL",
@@ -99,10 +130,13 @@ def provision_site(site_name: str, customer_domain: str, docker_image: str,
         outputs = apply_site(site_name, variables)
         production_ip = outputs.get("production_ip", "")
 
-        if pangolin and pangolin_domain_id and pangolin_subdomain:
+        if pangolin and pangolin_domain_id:
             db.update_site(site_name, status="creating_pangolin_resource")
             resource_resp = pangolin.create_public_resource(site_name, pangolin_domain_id, pangolin_subdomain)
             pangolin_resource_id = str(resource_resp.get("resourceId", ""))
+            if resource_resp.get("fullDomain"):
+                customer_domain = resource_resp["fullDomain"]
+                db.update_site(site_name, customer_domain=customer_domain)
             if pangolin_resource_id and pangolin_site_id:
                 pangolin.add_target(pangolin_resource_id, pangolin_site_id, production_ip, 8080)
 

@@ -1,9 +1,10 @@
 {% extends "base.html" %}
 {% block title %}{{ site.site_name }}{% endblock %}
+{% block head %}{% if site.status not in ("live", "error") %}<meta http-equiv="refresh" content="4">{% endif %}{% endblock %}
 {% block content %}
 {% set st = 'live' if site.status == 'live' else ('error' if site.status == 'error' else 'pending') %}
 <h1>{{ site.site_name }}</h1>
-<p class="page-sub"><span class="status"><span class="status-dot {{ st }}"></span>{{ site.status }}</span>{% if site.status not in ("live", "error") %} — Provisionierung laeuft im Hintergrund, Seite neu laden fuer den Fortschritt{% endif %}</p>
+<p class="page-sub"><span class="status"><span class="status-dot {{ st }}"></span>{{ site.status }}</span>{% if site.status not in ("live", "error") %} — laeuft, Seite aktualisiert sich automatisch{% endif %}</p>
 
 {% if site.last_error %}
 <div class="error">

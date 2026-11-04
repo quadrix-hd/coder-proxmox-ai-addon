@@ -29,7 +29,7 @@
     <select name="pangolin_domain_id">
       <option value="">– keine Resource automatisch anlegen, nur Site/Tunnel –</option>
       {% for d in domains %}
-      <option value="{{ d.domainId or d.id }}">{{ d.domain or d.baseDomain or d.domainId }}</option>
+      <option value="{{ d.id }}">{{ d.name }}</option>
       {% endfor %}
     </select>
     <label>Subdomain</label>
