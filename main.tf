@@ -328,23 +328,33 @@ resource "coder_agent" "main" {
     # Claude Code Skills zentral aus privatem Repo nachladen
     # (Token laeuft ueber GIT_ASKPASS statt in der Klartext-URL, damit es nicht in
     #  der Prozessliste (ps aux) des git-Subprozesses auftaucht)
+    # Nur einmal pro Tag neu synchronisieren statt bei JEDEM Workspace-Start -
+    # ein git clone zu GitHub bei jedem Start ist unnoetige Wartezeit und ein
+    # zusaetzlicher Netzwerk-Abhaengigkeitspunkt, nur um Skills zu finden, die
+    # sich fast nie mehrmals am Tag aendern.
     mkdir -p /root/.claude/skills
-    rm -rf /tmp/skills-repo
-    if [ -n "${var.skills_repo_token}" ]; then
+    SKILLS_MARKER=/root/.claude/skills/.last-sync
+    SKILLS_AGE=999999
+    if [ -f "$SKILLS_MARKER" ]; then
+      SKILLS_AGE=$(( $(date +%s) - $(cat "$SKILLS_MARKER") ))
+    fi
+    if [ -n "${var.skills_repo_token}" ] && [ "$SKILLS_AGE" -gt 86400 ]; then
+      rm -rf /tmp/skills-repo
       SKILLS_ASKPASS=$(mktemp)
       printf '#!/bin/bash\nprintf "%%s" "%s"\n' "${var.skills_repo_token}" > "$SKILLS_ASKPASS"
       chmod 700 "$SKILLS_ASKPASS"
       GIT_ASKPASS="$SKILLS_ASKPASS" GIT_TERMINAL_PROMPT=0 \
         git clone --depth 1 "https://x-access-token@github.com/${var.skills_repo_path}.git" /tmp/skills-repo 2>/dev/null || true
       rm -f "$SKILLS_ASKPASS"
-    fi
-    if [ -d /tmp/skills-repo ]; then
-      for skill_dir in /tmp/skills-repo/*/; do
-        skill_name=$(basename "$skill_dir")
-        rm -rf "/root/.claude/skills/$skill_name"
-        cp -r "$skill_dir" "/root/.claude/skills/$skill_name"
-      done
-      rm -rf /tmp/skills-repo
+      if [ -d /tmp/skills-repo ]; then
+        for skill_dir in /tmp/skills-repo/*/; do
+          skill_name=$(basename "$skill_dir")
+          rm -rf "/root/.claude/skills/$skill_name"
+          cp -r "$skill_dir" "/root/.claude/skills/$skill_name"
+        done
+        rm -rf /tmp/skills-repo
+      fi
+      date +%s > "$SKILLS_MARKER"
     fi
 
     # Port-8080-Konvention fuer den Demo-Button als globale Claude-Code-
@@ -373,8 +383,14 @@ CLAUDEMD_EOF
     # in diesem ephemeren, nicht-root Workspace-Container. Das ist auch der
     # Grund, warum hier kein git clone/Terraform-Download mehr noetig ist.
     mkdir -p /etc/docker
-    echo '{"insecure-registries":["${var.golive_registry_url}"]}' > /etc/docker/daemon.json
-    systemctl restart docker || true
+    if ! grep -q "${var.golive_registry_url}" /etc/docker/daemon.json 2>/dev/null; then
+      # Docker-Neustart nur, wenn die Registry-Config sich tatsaechlich
+      # aendert (z.B. echter Erststart) - sonst wuerde das bei JEDEM
+      # Workspace-Start passieren und kurzzeitig alle laufenden Container
+      # in diesem Workspace neu starten, ohne jeden Grund.
+      echo '{"insecure-registries":["${var.golive_registry_url}"]}' > /etc/docker/daemon.json
+      systemctl restart docker || true
+    fi
     echo '${var.golive_registry_password}' | docker login ${var.golive_registry_url} -u '${var.golive_registry_user}' --password-stdin || true
 
     echo '${base64encode(templatefile("${path.module}/scripts/go-live.sh.tftpl", { registry_url = var.golive_registry_url, admin_ui_url = var.golive_admin_ui_url, staging_name = "${data.coder_workspace_owner.me.name}-${data.coder_workspace.me.name}" }))}' | base64 -d > /usr/local/bin/go-live.sh
